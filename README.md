@@ -53,7 +53,7 @@ The academic calendar is intentionally modeled separately from the weekly timeta
 ## Project structure
 
 ```text
-timetable-fixer/
+adaptive-academic-scheduling-engine/
 ├── app.py
 ├── engine.py
 ├── optimizer.py
