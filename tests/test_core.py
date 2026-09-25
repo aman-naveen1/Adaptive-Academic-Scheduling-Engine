@@ -51,16 +51,40 @@ def test_unqualified_teacher_is_not_silently_reused():
 
 
 def test_teacher_disruption_removes_teacher_from_recovery():
-    data = load_demo_data()
+    data = {
+        "classes": [{
+            "day": "Monday",
+            "slot": "09:00-10:00",
+            "course": "DSA",
+            "teacher": "Unavailable Teacher",
+            "room": "R1",
+            "group": "G1",
+        }],
+        "teachers": [
+            {
+                "name": "Unavailable Teacher",
+                "qualified_courses": ["DSA"],
+                "available_slots": {},
+            },
+            {
+                "name": "Backup Teacher",
+                "qualified_courses": ["DSA"],
+                "available_slots": {},
+            },
+        ],
+        "rooms": [{"name": "R1", "capacity": 50}],
+        "students": [{"id": "G1", "size": 30}],
+    }
+
     result = simulate_disruption(
         data,
         "Teacher unavailable",
-        "Dr. Sharma",
+        "Unavailable Teacher",
         time_limit=3,
     )
 
-    if result["status"] in {"OPTIMAL", "FEASIBLE"}:
-        assert all(row["teacher"] != "Dr. Sharma" for row in result["schedule"])
+    assert result["status"] in {"OPTIMAL", "FEASIBLE"}
+    assert all(row["teacher"] != "Unavailable Teacher" for row in result["schedule"])
 
 
 def test_calendar_summary_ignores_events_outside_semester():
