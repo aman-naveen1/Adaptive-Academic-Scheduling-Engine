@@ -1,9 +1,10 @@
 import streamlit as st
 from engine import load_demo_data, parse_timetable_pdf, repair_schedule
+from optimizer import optimize_timetable
 
 st.set_page_config(page_title="Timetable Fixer", page_icon="🗓️", layout="wide")
 st.title("🗓️ Timetable Fixer")
-st.caption("Repair disrupted college schedules while minimizing student idle gaps and timetable conflicts.")
+st.caption("Constraint-based timetable repair: minimize student gaps while respecting teacher, room and group constraints.")
 
 with st.sidebar:
     st.header("Inputs")
@@ -35,11 +36,20 @@ with col1:
 with col2:
     absent_slot = st.selectbox("Disruption slot", ["09:00-10:00", "10:00-11:00", "11:15-12:15", "12:15-13:15", "14:00-15:00", "15:00-16:00"])
 
+solver_mode = st.radio("Repair engine", ["CP-SAT optimizer", "Heuristic"], horizontal=True)
+
 if st.button("Repair timetable", type="primary"):
-    result = repair_schedule(data, absent_day, absent_slot, teacher_filter, student_id)
+    if solver_mode == "CP-SAT optimizer":
+        result = optimize_timetable(data, student_id=student_id, absent_teacher=teacher_filter,
+                                    absent_day=absent_day, absent_slot=absent_slot)
+    else:
+        result = repair_schedule(data, absent_day, absent_slot, teacher_filter, student_id)
+
     st.subheader("Repair result")
     if result["changed"]:
         st.success(result["summary"])
+        if result.get("status"):
+            st.caption(f"Solver status: {result['status']}")
         st.dataframe(result["schedule"], use_container_width=True)
         st.subheader("Why this move?")
         for reason in result["reasons"]:
