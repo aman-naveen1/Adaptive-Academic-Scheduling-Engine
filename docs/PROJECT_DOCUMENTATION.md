@@ -738,7 +738,7 @@ This sequence demonstrates **requirements analysis, modular design, constraint m
 ## 22. Repository Structure
 
 `text
-timetable-fixer/
+adaptive-academic-scheduling-engine/
 ├── app.py
 ├── engine.py
 ├── optimizer.py
