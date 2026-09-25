@@ -4,3 +4,6 @@ pypdf>=5.0
 python-dateutil>=2.9
 reportlab>=4.2
 ortools>=9.10
+PyMuPDF>=1.24
+Pillow>=10.4
+pytesseract>=0.3.13
