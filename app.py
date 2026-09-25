@@ -123,7 +123,12 @@ if calendar_events:
     st.dataframe(calendar_events, use_container_width=True)
 
     impact = analyze_calendar_impact(
-        data, calendar_events, restricted_as_holiday, weeks=16
+        data,
+        calendar_events,
+        restricted_as_holiday,
+        weeks=16,
+        semester_start=semester_start,
+        semester_end=semester_end,
     )
     if impact["impacted_sessions"]:
         st.info(
@@ -180,6 +185,9 @@ elif solver_mode in {"Repair one disruption", "Heuristic repair"}:
         )
 
 if st.button("Run AASE", type="primary"):
+    if solver_mode != "Robustness analysis":
+        st.session_state.pop("robustness", None)
+
     if not data["classes"]:
         st.warning("No timetable rows were extracted.")
     elif solver_mode == "Calendar-aware optimization":
@@ -187,7 +195,12 @@ if st.button("Run AASE", type="primary"):
             st.warning("Upload an academic calendar first.")
         else:
             result = optimize_with_calendar(
-                data, calendar_events, restricted_as_holiday, time_limit=15
+                data,
+                calendar_events,
+                restricted_as_holiday,
+                time_limit=15,
+                semester_start=semester_start,
+                semester_end=semester_end,
             )
             st.session_state["last_result"] = result
     elif solver_mode == "Optimize whole timetable":
