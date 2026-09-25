@@ -1,7 +1,33 @@
+from copy import deepcopy
+
 from ortools.sat.python import cp_model
 
-DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday"]
-SLOTS = ["09:00-10:00","10:00-11:00","11:15-12:15","12:15-13:15","14:00-15:00","15:00-16:00"]
+DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+SLOTS = [
+    "09:00-10:00",
+    "10:00-11:00",
+    "11:15-12:15",
+    "12:15-13:15",
+    "14:00-15:00",
+    "15:00-16:00",
+]
+
+
+def _student_count_for_class(course_class, data):
+    explicit = course_class.get("student_count")
+    if explicit is not None:
+        return int(explicit)
+
+    fallback = data.get("student_capacity")
+    if fallback is not None:
+        return int(fallback)
+
+    group = course_class.get("group")
+    for student in data.get("students", []):
+        if student.get("id") == group:
+            return int(student.get("size", 0) or 0)
+
+    return 0
 
 
 def gap_penalty(schedule, group, day, slot):
@@ -21,6 +47,21 @@ def gap_penalty(schedule, group, day, slot):
     )
 
 
+def _qualified_teachers(course_class, teachers):
+    qualified = [
+        name
+        for name, teacher in teachers.items()
+        if course_class["course"] in teacher.get("qualified_courses", [])
+    ]
+
+    # If explicit teacher metadata exists, qualification is a hard constraint.
+    # Do not silently re-add a teacher who is known to be unqualified.
+    if not teachers:
+        return [course_class["teacher"]]
+
+    return qualified
+
+
 def optimize_whole_timetable(data, time_limit=15):
     classes = [dict(x) for x in data.get("classes", [])]
     teachers = {x["name"]: x for x in data.get("teachers", [])}
@@ -28,20 +69,19 @@ def optimize_whole_timetable(data, time_limit=15):
     calendar_penalties = data.get("_calendar_day_penalties", {})
 
     if not classes or not rooms:
-        return {"changed": False, "status": "INVALID", "summary": "Need classes and rooms."}
+        return {
+            "changed": False,
+            "status": "INVALID",
+            "summary": "Need classes and rooms.",
+        }
 
     model = cp_model.CpModel()
     candidates = {}
 
     for i, c in enumerate(classes):
-        qualified = [
-            n for n, t in teachers.items()
-            if c["course"] in t.get("qualified_courses", [])
-        ]
-        if c["teacher"] in teachers and c["teacher"] not in qualified:
-            qualified.append(c["teacher"])
-        qualified = qualified or [c["teacher"]]
+        qualified = _qualified_teachers(c, teachers)
         choices = []
+        student_count = _student_count_for_class(c, data)
 
         for d in DAYS:
             for s in SLOTS:
@@ -49,13 +89,12 @@ def optimize_whole_timetable(data, time_limit=15):
                     avail = teachers.get(t, {}).get("available_slots", {})
                     if avail and s not in avail.get(d, []):
                         continue
+
                     for r, room in rooms.items():
-                        if (
-                            c.get("student_count", data.get("student_capacity", 0))
-                            and room.get("capacity", 0)
-                            < c.get("student_count", data.get("student_capacity", 0))
-                        ):
+                        capacity = room.get("capacity")
+                        if student_count and capacity is not None and capacity < student_count:
                             continue
+
                         v = model.NewBoolVar(f"x_{i}_{d}_{s}_{t}_{r}")
                         choices.append((v, d, s, t, r))
 
@@ -73,8 +112,13 @@ def optimize_whole_timetable(data, time_limit=15):
         buckets = {}
         for i, choices in candidates.items():
             for v, d, s, t, r in choices:
-                value = {"group": classes[i]["group"], "teacher": t, "room": r}[resource]
+                value = {
+                    "group": classes[i]["group"],
+                    "teacher": t,
+                    "room": r,
+                }[resource]
                 buckets.setdefault((d, s, value), []).append(v)
+
         for vs in buckets.values():
             model.Add(sum(vs) <= 1)
 
@@ -150,10 +194,18 @@ def optimize_timetable(
     absent_slot=None,
     time_limit=5,
 ):
+    """Repair a teacher disruption with one global solve.
+
+    The previous implementation tried many candidate placements and invoked the
+    global optimizer once per candidate. That could trigger dozens of solves.
+    Instead, model the teacher as unavailable and let one global CP-SAT solve
+    find the recovery timetable.
+    """
     classes = [dict(x) for x in data.get("classes", [])]
     target = next(
         (
-            x for x in classes
+            x
+            for x in classes
             if x["teacher"] == absent_teacher
             and x["day"] == absent_day
             and x["slot"] == absent_slot
@@ -163,73 +215,33 @@ def optimize_timetable(
     if not target:
         return {
             "changed": False,
+            "status": "NO_MATCH",
             "summary": "No class matched that teacher/day/slot.",
             "schedule": classes,
             "reasons": [],
         }
 
-    fixed = [x for x in classes if x is not target]
-    teachers = {x["name"]: x for x in data.get("teachers", [])}
-    rooms = data.get("rooms", [])
-    qualified = [
-        n for n, t in teachers.items()
-        if target["course"] in t.get("qualified_courses", [])
+    trial = deepcopy(data)
+    blocked = {day: [] for day in DAYS}
+    trial["teachers"] = [
+        ({**teacher, "available_slots": blocked} if teacher.get("name") == absent_teacher else teacher)
+        for teacher in trial.get("teachers", [])
     ]
-    if target["teacher"] in teachers and target["teacher"] not in qualified:
-        qualified.append(target["teacher"])
 
-    best = None
-    for d in DAYS:
-        for s in SLOTS:
-            for t in qualified:
-                avail = teachers.get(t, {}).get("available_slots", {})
-                if avail and s not in avail.get(d, []):
-                    continue
-                if any(
-                    x["group"] == target["group"]
-                    and x["day"] == d
-                    and x["slot"] == s
-                    for x in fixed
-                ):
-                    continue
-                if any(
-                    x["teacher"] == t
-                    and x["day"] == d
-                    and x["slot"] == s
-                    for x in fixed
-                ):
-                    continue
-                for room in rooms:
-                    r = room["name"]
-                    if any(
-                        x["room"] == r
-                        and x["day"] == d
-                        and x["slot"] == s
-                        for x in fixed
-                    ):
-                        continue
-                    trial = dict(data)
-                    trial["classes"] = fixed + [
-                        dict(target, day=d, slot=s, teacher=t, room=r)
-                    ]
-                    result = optimize_whole_timetable(trial, time_limit=time_limit)
-                    if result["status"] in ("OPTIMAL", "FEASIBLE") and (
-                        best is None
-                        or result.get("changed_count", 99999)
-                        < best.get("changed_count", 99999)
-                    ):
-                        best = result
+    result = optimize_whole_timetable(trial, time_limit=time_limit)
+    if result.get("status") not in ("OPTIMAL", "FEASIBLE"):
+        return {
+            "changed": False,
+            "status": result.get("status", "INFEASIBLE"),
+            "summary": "No feasible repair found.",
+            "schedule": classes,
+            "reasons": result.get("reasons", []),
+        }
 
-    if best:
-        best["summary"] = (
-            "CP-SAT repair found a globally consistent placement around the disruption."
-        )
-        return best
-
-    return {
-        "changed": False,
-        "status": "INFEASIBLE",
-        "summary": "No feasible repair found.",
-        "schedule": classes,
-        "reasons": [],
-    }
+    result["summary"] = (
+        "CP-SAT repair found a globally consistent timetable around the teacher disruption."
+    )
+    result.setdefault("reasons", []).append(
+        f"{absent_teacher} was unavailable for all scheduling slots during the repair."
+    )
+    return result
