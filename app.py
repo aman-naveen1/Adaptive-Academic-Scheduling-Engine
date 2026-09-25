@@ -24,6 +24,10 @@ else:
         try:
             classes = parse_timetable_pdf(f, use_ocr=ocr_mode, default_group=student_id)
             data["classes"].extend(classes)
+            if ocr_mode:
+                low_conf = sum(1 for row in classes if row.get("ocr_confidence", 100) < 55)
+                if low_conf:
+                    ocr_warnings.append(f"{f.name}: {low_conf} extracted row(s) have low OCR confidence.")
         except Exception as exc:
             st.error(f"Could not process {f.name}: {exc}")
 
