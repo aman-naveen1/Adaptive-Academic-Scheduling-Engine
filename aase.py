@@ -75,8 +75,12 @@ def simulate_disruption(data, disruption_type, target_name, day=None, slot=None,
 
     if disruption_type == "Teacher unavailable":
         affected = [x for x in classes if x.get("teacher") == target_name]
+        # Keep the teacher in the model but make every weekday unavailable.
+        # This prevents the optimizer from silently falling back to the original teacher.
+        blocked = {day: [] for day in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]}
         trial["teachers"] = [
-            t for t in trial.get("teachers", []) if t.get("name") != target_name
+            ({**t, "available_slots": blocked} if t.get("name") == target_name else t)
+            for t in trial.get("teachers", [])
         ]
         if not affected:
             return {"status": "NO_MATCH", "summary": f"No classes use teacher {target_name}."}
