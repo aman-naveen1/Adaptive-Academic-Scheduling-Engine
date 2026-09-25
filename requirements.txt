@@ -1,0 +1,4 @@
+streamlit>=1.38
+pandas>=2.2
+pypdf>=5.0
+python-dateutil>=2.9
