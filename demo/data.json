@@ -1,0 +1,27 @@
+{
+  "classes": [
+    {"day":"Monday","slot":"09:00-10:00","course":"DSA","teacher":"Dr. Sharma","room":"C-201","group":"BSc-CS-3A"},
+    {"day":"Monday","slot":"10:00-11:00","course":"DBMS","teacher":"Prof. Iyer","room":"C-201","group":"BSc-CS-3A"},
+    {"day":"Monday","slot":"12:15-13:15","course":"OS","teacher":"Dr. Mehta","room":"C-201","group":"BSc-CS-3A"},
+    {"day":"Monday","slot":"14:00-15:00","course":"Probability","teacher":"Dr. Khan","room":"C-201","group":"BSc-CS-3A"},
+    {"day":"Tuesday","slot":"09:00-10:00","course":"Software Engineering","teacher":"Prof. Rao","room":"C-201","group":"BSc-CS-3A"},
+    {"day":"Tuesday","slot":"10:00-11:00","course":"DSA","teacher":"Dr. Sharma","room":"C-201","group":"BSc-CS-3A"},
+    {"day":"Tuesday","slot":"11:15-12:15","course":"DBMS","teacher":"Prof. Iyer","room":"C-201","group":"BSc-CS-3A"},
+    {"day":"Wednesday","slot":"09:00-10:00","course":"OS","teacher":"Dr. Mehta","room":"C-201","group":"BSc-CS-3A"},
+    {"day":"Wednesday","slot":"10:00-11:00","course":"Probability","teacher":"Dr. Khan","room":"C-201","group":"BSc-CS-3A"},
+    {"day":"Thursday","slot":"09:00-10:00","course":"DSA","teacher":"Dr. Sharma","room":"C-201","group":"BSc-CS-3A"},
+    {"day":"Thursday","slot":"10:00-11:00","course":"DBMS","teacher":"Prof. Iyer","room":"C-201","group":"BSc-CS-3A"},
+    {"day":"Friday","slot":"09:00-10:00","course":"Software Engineering","teacher":"Prof. Rao","room":"C-201","group":"BSc-CS-3A"}
+  ],
+  "teachers": [
+    {"name":"Dr. Sharma","qualified_courses":["DSA"],"available_slots":{"Monday":["10:00-11:00","11:15-12:15","12:15-13:15","14:00-15:00","15:00-16:00"],"Tuesday":["09:00-10:00","10:00-11:00"],"Wednesday":["11:15-12:15","12:15-13:15"],"Thursday":["09:00-10:00","10:00-11:00"],"Friday":["09:00-10:00"]}},
+    {"name":"Prof. Iyer","qualified_courses":["DBMS"],"available_slots":{"Monday":["10:00-11:00"],"Tuesday":["11:15-12:15"],"Wednesday":["09:00-10:00","10:00-11:00"],"Thursday":["10:00-11:00"],"Friday":["10:00-11:00","11:15-12:15"]}},
+    {"name":"Dr. Mehta","qualified_courses":["OS"],"available_slots":{"Monday":["14:00-15:00"],"Tuesday":["12:15-13:15"],"Wednesday":["09:00-10:00"],"Thursday":["12:15-13:15"],"Friday":["09:00-10:00","10:00-11:00"]}},
+    {"name":"Dr. Khan","qualified_courses":["Probability"],"available_slots":{"Monday":["09:00-10:00","14:00-15:00"],"Tuesday":["14:00-15:00"],"Wednesday":["10:00-11:00"],"Thursday":["14:00-15:00"],"Friday":["11:15-12:15","12:15-13:15"]}},
+    {"name":"Prof. Rao","qualified_courses":["Software Engineering"],"available_slots":{"Monday":["11:15-12:15"],"Tuesday":["09:00-10:00"],"Wednesday":["14:00-15:00"],"Thursday":["09:00-10:00"],"Friday":["09:00-10:00"]}}
+  ],
+  "rooms": [
+    {"name":"C-201","capacity":60},{"name":"C-202","capacity":60},{"name":"Lab-1","capacity":40}
+  ],
+  "students": [{"id":"BSc-CS-3A","size":45}]
+}
