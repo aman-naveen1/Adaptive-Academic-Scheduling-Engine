@@ -103,3 +103,22 @@ def test_database_import_replacement_clears_stale_resources(tmp_path, monkeypatc
     data = database.load_data()
     assert {t["name"] for t in data["teachers"]} == {"New Teacher"}
     assert {r["name"] for r in data["rooms"]} == {"NEW"}
+
+
+def test_dense_timetable_gap_objective_is_feasible():
+    # Two occupied slots between another pair used to make the gap constraint infeasible.
+    from optimizer import optimize_whole_timetable
+    data = _base_data()
+    data["classes"] = [
+        {"day": "Monday", "slot": s, "course": "DSA", "teacher": "Vipin Rathi", "room": "C-201", "group": "BSc-CS-3A"}
+        for s in ["09:00-10:00", "10:00-11:00", "11:15-12:15", "12:15-13:15"]
+    ]
+    result = optimize_whole_timetable(data, time_limit=3)
+    assert result["status"] in {"OPTIMAL", "FEASIBLE"}
+
+
+def test_rh_abbreviation_needs_to_be_a_tag():
+    from calendar_parser import _classify
+    assert _classify("Holi (RH)") == "restricted_holiday"
+    assert _classify("Karva Chauth - RH") == "restricted_holiday"
+    assert _classify("Rh factor lecture") == "academic_event"
