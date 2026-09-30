@@ -98,7 +98,9 @@ def _apply_absence(data, absent_teacher, absent_day, absent_slot):
     trial["teachers"] = list(teachers.values())
     return trial
 
-def optimize_whole_timetable(data, time_limit=15):
+def optimize_whole_timetable(data, time_limit=15, absent_teacher=None, absent_day=None, absent_slot=None):
+    if absent_teacher and absent_day and absent_slot:
+        data = _apply_absence(data, absent_teacher, absent_day, absent_slot)
     classes = [dict(x) for x in data.get("classes", [])]
     teachers = {x["name"]: x for x in data.get("teachers", [])}
     rooms = {x["name"]: x for x in data.get("rooms", [])}
@@ -174,6 +176,8 @@ def optimize_whole_timetable(data, time_limit=15):
     ]
     if calendar_penalties:
         reasons.append("Calendar-aware costs discourage recurring placements on blocked academic-calendar weekdays.")
+    if absent_teacher and absent_day and absent_slot:
+        reasons.append(f"{absent_teacher} was treated as unavailable on {absent_day} {absent_slot}.")
     return {
         "changed": changed > 0,
         "status": solver.StatusName(status),
@@ -191,28 +195,7 @@ def optimize_timetable(data, student_id=None, absent_teacher=None, absent_day=No
     if not target:
         return {"changed": False, "status": "NO_MATCH", "summary": "No class matched that teacher/day/slot.", "schedule": classes, "reasons": []}
 
-    trial = deepcopy(data)
-    existing = {t.get("name") for t in trial.get("teachers", [])}
-    replacement = []
-    for teacher in trial.get("teachers", []):
-        if teacher.get("name") == absent_teacher:
-            slots = {d: list(v) for d, v in teacher.get("available_slots", {}).items()}
-            slots.setdefault(absent_day, list(SLOTS))
-            slots[absent_day] = [s for s in slots[absent_day] if s != absent_slot]
-            replacement.append({**teacher, "available_slots": slots})
-        else:
-            replacement.append(teacher)
-    # Teachers that appear in the timetable but not in the metadata still need an entry,
-    # otherwise adding just one teacher would switch off "no metadata" mode for everyone else.
-    for c in classes:
-        name = c["teacher"]
-        if name in existing:
-            continue
-        existing.add(name)
-        courses = sorted({x["course"] for x in classes if x["teacher"] == name})
-        slots = {d: [s for s in SLOTS if not (name == absent_teacher and d == absent_day and s == absent_slot)] for d in DAYS}
-        replacement.append({"name": name, "qualified_courses": courses, "available_slots": slots})
-    trial["teachers"] = replacement
+        trial = _apply_absence(data, absent_teacher, absent_day, absent_slot)
 
     result = optimize_whole_timetable(trial, time_limit=time_limit)
     if result.get("status") not in ("OPTIMAL", "FEASIBLE"):
