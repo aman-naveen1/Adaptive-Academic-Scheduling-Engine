@@ -12,10 +12,13 @@ DATE_PATTERNS = [
     re.compile(r"\b(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{4})\b"),
     re.compile(r"\b([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(\d{4})\b"),
 ]
-MONTHS = {name.lower(): i for i, name in enumerate([
+MONTHS = {}
+for number, name in enumerate([
     "January", "February", "March", "April", "May", "June",
     "July", "August", "September", "October", "November", "December",
-], 1)}
+], 1):
+    MONTHS[name.lower()] = number
+    MONTHS[name[:3].lower()] = number
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 
 
@@ -38,11 +41,50 @@ def _parse_date(text: str):
     return None
 
 
+def _parse_date_range(text: str):
+    """Return every calendar date represented by a same-year date range."""
+    # 24 Dec - 31 Dec 2026 / 24 December to 31 December 2026
+    m = re.search(
+        r"\b(\d{1,2})\s+([A-Za-z]{3,9})\s*(?:-|–|—|to)\s*(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{4})\b",
+        text,
+        re.I,
+    )
+    if m:
+        try:
+            start = date(int(m.group(5)), MONTHS[m.group(2).lower()], int(m.group(1)))
+            end = date(int(m.group(5)), MONTHS[m.group(4).lower()], int(m.group(3)))
+            return _expand_range(start, end)
+        except (ValueError, KeyError):
+            return []
+
+    # 24-31 Dec 2026 / 24–31 December 2026
+    m = re.search(r"\b(\d{1,2})\s*(?:-|–|—|to)\s*(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{4})\b", text, re.I)
+    if m:
+        try:
+            start = date(int(m.group(4)), MONTHS[m.group(3).lower()], int(m.group(1)))
+            end = date(int(m.group(4)), MONTHS[m.group(3).lower()], int(m.group(2)))
+            return _expand_range(start, end)
+        except (ValueError, KeyError):
+            return []
+    return []
+
+
+def _expand_range(start, end):
+    if end < start or (end - start).days > 370:
+        return []
+    return [start + timedelta(days=i) for i in range((end - start).days + 1)]
+
+
 def _classify(text: str):
-    value = text.lower()
-    if re.search(r"restricted\s+holiday|optional\s+holiday|restricted|optional holiday|rh\b", value):
+    value = re.sub(r"\s+", " ", text.lower()).strip()
+    # Resumption/opening events are not holidays just because they mention one.
+    if re.search(r"\b(classes?|college|university)\s+(resume|reopen|re-start|restart)|resume\s+after|reopen\s+after", value):
+        return "academic_event"
+    if re.search(r"restricted\s+holiday|optional\s+holiday|\brestricted\b|\brh\b", value):
         return "restricted_holiday"
-    if re.search(r"holiday|vacation|break|closed|no classes|college closed", value):
+    if re.search(r"public\s+holiday|national\s+holiday|holiday|vacation|college\s+closed|no\s+classes|closed\s+for\s+the\s+day", value):
+        return "holiday"
+    if re.search(r"\b(?:winter|summer|mid[- ]?semester|semester|term|diwali|christmas|spring|autumn)\s+break\b", value):
         return "holiday"
     return "academic_event"
 
@@ -84,6 +126,10 @@ def _events_from_lines(lines, source):
     for line in lines:
         if not line:
             continue
+        range_dates = _parse_date_range(line)
+        if range_dates:
+            events.extend(_event(d, line, source) for d in range_dates)
+            continue
         event_date = _parse_date(line)
         if event_date:
             events.append(_event(event_date, line, source))
@@ -97,11 +143,7 @@ def _events_from_lines(lines, source):
 
 
 def parse_academic_calendar(uploaded_file, use_ocr=True):
-    """Parse PDF/CSV/XLSX academic calendars into normalized dated events.
-
-    PDFs are parsed with native text extraction first. If no dates are found and
-    use_ocr is enabled, local Tesseract OCR is used as a fallback for scans.
-    """
+    """Parse PDF/CSV/XLSX academic calendars into normalized dated events."""
     lines, source = _lines_from_file(uploaded_file)
     events = _events_from_lines(lines, source)
     warnings = []
