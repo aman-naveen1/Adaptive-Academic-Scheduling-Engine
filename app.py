@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from html import escape
 import pandas as pd
 import streamlit as st
 
@@ -71,7 +72,7 @@ current_gap = gap_score(data["classes"], selected_group)
 
 m1,m2,m3,m4 = st.columns(4)
 for col,value,label in [(m1,len(today_classes),"Classes Today"),(m2,current_gap,"Student Idle-Gap Score"),(m3,absence_count(),"Recorded Staff Absences"),(m4,len(data["rooms"]),"Managed Rooms")]:
-    col.markdown(f'<div class="metric-card"><div class="value">{value}</div><div class="label">{label}</div></div>', unsafe_allow_html=True)
+    col.markdown(f'<div class="metric-card"><div class="value">{escape(str(value))}</div><div class="label">{escape(label)}</div></div>', unsafe_allow_html=True)
 
 if page == "Dashboard":
     st.markdown('<div class="section-title">Today\'s Timetable</div>', unsafe_allow_html=True)
@@ -79,7 +80,7 @@ if page == "Dashboard":
         st.markdown('<div class="timeline">', unsafe_allow_html=True)
         order={s:i for i,s in enumerate(["09:00-10:00","10:00-11:00","11:15-12:15","12:15-13:15","14:00-15:00","15:00-16:00"])}
         for row in sorted(today_classes,key=lambda x:order.get(x["slot"],99)):
-            st.markdown(f'<div class="timeline-item"><div class="timeline-time">{row["slot"]}</div><div class="class-card"><div class="class-course">{row["course"]}</div><div class="class-meta">{row["teacher"]} · Room {row["room"]} · {row["group"]}</div></div></div>',unsafe_allow_html=True)
+            st.markdown(f'<div class="timeline-item"><div class="timeline-time">{escape(str(row["slot"]))}</div><div class="class-card"><div class="class-course">{escape(str(row["course"]))}</div><div class="class-meta">{escape(str(row["teacher"]))} · Room {escape(str(row["room"]))} · {escape(str(row["group"]))}</div></div></div>',unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
     else: st.info(f"No scheduled classes for {selected_group} today ({today_name}).")
     c1,c2=st.columns(2)
@@ -94,8 +95,8 @@ if page == "Dashboard":
 
 elif page == "Time Table":
     st.markdown('<div class="section-title">Timetable Intake</div>',unsafe_allow_html=True)
-    st.caption("Upload PDF, CSV or Excel. CSV/XLSX are parsed directly; PDF text is extracted first and scanned PDFs can fall back to local Tesseract OCR.")
-    files=st.file_uploader("Upload timetable files",type=["pdf","csv","xlsx"],accept_multiple_files=True)
+    st.caption("Upload PDF, CSV or Excel. CSV/XLSX/XLS are parsed directly; PDF text is extracted first and scanned PDFs can fall back to local Tesseract OCR.")
+    files=st.file_uploader("Upload timetable files",type=["pdf","csv","xlsx","xls"],accept_multiple_files=True)
     use_ocr=st.checkbox("Enable Tesseract fallback for scanned PDFs",value=True)
     if files and st.button("Parse & import timetable",type="primary"):
         imported=[]
@@ -133,7 +134,7 @@ elif page == "Rooms":
 
 elif page == "Academic Calendar":
     st.markdown('<div class="section-title">Academic Calendar Intelligence</div>',unsafe_allow_html=True)
-    calendar_file=st.file_uploader("Upload academic calendar",type=["pdf","csv","xlsx"],key="calendar_upload")
+    calendar_file=st.file_uploader("Upload academic calendar",type=["pdf","csv","xlsx","xls"],key="calendar_upload")
     restricted=st.checkbox("Treat restricted holidays as blocked",value=False)
     if calendar_file and st.button("Parse & save calendar",type="primary"):
         try:
@@ -145,12 +146,12 @@ elif page == "Academic Calendar":
                 st.dataframe(pd.DataFrame(events),use_container_width=True,hide_index=True)
             else: st.error("No calendar events were parsed, so nothing was saved.")
         except Exception as exc: st.error(f"Could not process academic calendar: {exc}")
-    else: st.caption("Supported: PDF, CSV, XLSX. Scanned PDFs automatically fall back to Tesseract when needed.")
+    else: st.caption("Supported: PDF, CSV, XLSX and XLS. Scanned PDFs automatically fall back to Tesseract when needed.")
 
 elif page == "OCR Intake":
     st.markdown('<div class="section-title">Document Intake & OCR</div>',unsafe_allow_html=True)
-    st.info("AASE accepts PDF, CSV and XLSX for timetable and academic-calendar intake. OCR is only needed when a PDF contains images/scans instead of selectable text.")
-    st.code("PDF → text extraction → parser → SQLite\nScanned PDF → Tesseract OCR → parser → SQLite\nCSV/XLSX → pandas → normalized records → SQLite",language="text")
+    st.info("AASE accepts PDF, CSV and Excel for timetable and academic-calendar intake. OCR is only needed when a PDF contains images/scans instead of selectable text.")
+    st.code("PDF → text extraction → parser → SQLite\nScanned PDF → Tesseract OCR → parser → SQLite\nCSV/XLSX/XLS → pandas → normalized records → SQLite",language="text")
     st.markdown("### Tesseract configuration")
     st.write("Install Tesseract 5.x locally. If it is not on PATH, set TESSERACT_CMD to the full tesseract.exe path.")
     st.code('Windows example:\nTESSERACT_CMD=C:\\Program Files\\Tesseract-OCR\\tesseract.exe',language="text")
@@ -161,8 +162,15 @@ elif page == "Disruptions":
     disruption_type=st.radio("Failure type",["Teacher unavailable","Room unavailable"],horizontal=True)
     targets=sorted({x["teacher"] if disruption_type=="Teacher unavailable" else x["room"] for x in data["classes"]})
     target=st.selectbox("Resource",targets or ["No resources found"])
+    if disruption_type == "Teacher unavailable":
+        d1,d2=st.columns(2)
+        with d1: disruption_day=st.selectbox("Absent day",["Monday","Tuesday","Wednesday","Thursday","Friday"],key="disruption_day")
+        with d2: disruption_slot=st.selectbox("Absent slot",["09:00-10:00","10:00-11:00","11:15-12:15","12:15-13:15","14:00-15:00","15:00-16:00"],key="disruption_slot")
+    else:
+        disruption_day=None
+        disruption_slot=None
     if st.button("Simulate disruption",type="primary"):
-        result=simulate_disruption(data,disruption_type,target,time_limit=10); st.session_state["last_result"]=result; record_run("Disruption simulation",result.get("status","UNKNOWN"),result.get("summary",""))
+        result=simulate_disruption(data,disruption_type,target,day=disruption_day,slot=disruption_slot,time_limit=10); st.session_state["last_result"]=result; record_run("Disruption simulation",result.get("status","UNKNOWN"),result.get("summary",""))
     if "last_result" in st.session_state:
         result=st.session_state["last_result"]
         (st.success if result.get("status") in {"OPTIMAL","FEASIBLE"} or result.get("changed") else st.warning)(result.get("summary","Completed."))
