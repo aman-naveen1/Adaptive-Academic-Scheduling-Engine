@@ -1,7 +1,6 @@
 from pathlib import Path
 import json
-from io import BytesIO
-from ocr_parser import parse_ocr_timetable
+from ingestion import parse_timetable_file
 
 SLOTS = ["09:00-10:00","10:00-11:00","11:15-12:15","12:15-13:15","14:00-15:00","15:00-16:00"]
 
@@ -11,19 +10,9 @@ def load_demo_data():
 
 
 def parse_timetable_pdf(uploaded_file, use_ocr=False, default_group="OCR-GROUP", cloud_ocr_config=None):
-    """Parse a timetable PDF using native extraction or local Tesseract OCR."""
-    if use_ocr:
-        records, _, _ = parse_ocr_timetable(uploaded_file, default_group=default_group)
-        return records
-
-    from pypdf import PdfReader
-    reader = PdfReader(BytesIO(uploaded_file.getvalue()))
-    text = "\n".join(page.extract_text() or "" for page in reader.pages)
-    return [{
-        "day": "UNKNOWN", "slot": "UNKNOWN", "course": "PDF_TEXT",
-        "teacher": "UNKNOWN", "room": "UNKNOWN", "group": "UNKNOWN",
-        "source_text": text[:4000]
-    }]
+    """Backward-compatible entry point: parse timetable PDF/CSV/XLSX."""
+    records, _source = parse_timetable_file(uploaded_file, default_group=default_group, use_ocr=use_ocr)
+    return records
 
 
 def gap_score(schedule, student_id):
