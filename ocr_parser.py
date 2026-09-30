@@ -1,6 +1,6 @@
 import os
 import re
-from io import BytesIO
+from pathlib import Path
 
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 SLOT_PATTERNS = [
@@ -35,6 +35,24 @@ def _split_columns(line):
     return [_clean(p) for p in re.split(r"\t+|\s{2,}|\|", line) if _clean(p)]
 
 
+def _find_tesseract():
+    """Find Tesseract on PATH or in common Windows installation locations."""
+    configured = os.getenv("TESSERACT_CMD", "").strip().strip('"')
+    if configured and Path(configured).is_file():
+        return configured
+
+    candidates = [
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Tesseract-OCR\tesseract.exe"),
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            return candidate
+
+    return None
+
+
 def _ocr_pages(uploaded_file):
     """Run local Tesseract OCR against each rendered PDF page."""
     try:
@@ -44,8 +62,7 @@ def _ocr_pages(uploaded_file):
     except ImportError as exc:
         raise RuntimeError("Install OCR dependencies with: python -m pip install -r requirements.txt") from exc
 
-    # Allow advanced users to configure a non-default Tesseract installation.
-    tesseract_cmd = os.getenv("TESSERACT_CMD", "").strip()
+    tesseract_cmd = _find_tesseract()
     if tesseract_cmd:
         pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
 
@@ -53,15 +70,15 @@ def _ocr_pages(uploaded_file):
         pytesseract.get_tesseract_version()
     except Exception as exc:
         raise RuntimeError(
-            "Tesseract OCR is not installed or is not available on PATH. "
-            "Install Tesseract OCR and restart your terminal, or set TESSERACT_CMD to the full tesseract.exe path."
+            "Tesseract OCR is not available. Install Tesseract 5.x, restart Streamlit, "
+            "or set TESSERACT_CMD to the full path of tesseract.exe. "
+            "AASE checks PATH and the standard Windows installation locations."
         ) from exc
 
     document = fitz.open(stream=uploaded_file.getvalue(), filetype="pdf")
     pages = []
     try:
         for page_number, page in enumerate(document, start=1):
-            # 2x rendering improves OCR accuracy for small timetable text.
             pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
             image = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
             text = pytesseract.image_to_string(image, config="--psm 6")
