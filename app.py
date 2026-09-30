@@ -5,7 +5,8 @@ import streamlit as st
 from aase import robustness_report, simulate_disruption
 from calendar_parser import parse_academic_calendar
 from database import absence_count, init_db, load_data, recent_runs, record_absence, record_run, save_calendar, seed_from_data
-from engine import gap_score, load_demo_data, parse_timetable_pdf, repair_schedule
+from engine import gap_score, load_demo_data, repair_schedule
+from ingestion import parse_timetable_file
 from optimizer import optimize_timetable, optimize_whole_timetable
 
 st.set_page_config(page_title="AASE Control Center", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
@@ -13,41 +14,30 @@ init_db()
 
 st.markdown("""
 <style>
-:root { --navy:#123b70; --navy2:#0d315e; --ink:#20354b; --muted:#66778a; --line:#d9e0e8; --panel:#f7f9fc; }
+:root { --navy:#123b70; --ink:#20354b; }
 html, body, [class*="css"] { color:#20354b; }
 .stApp { background:#f7f9fc !important; color:#20354b !important; }
 .block-container { padding:1.25rem 1.6rem 2.5rem; max-width:1500px; }
-section[data-testid="stSidebar"] { background:#ffffff !important; border-right:1px solid #dfe5ec; }
-section[data-testid="stSidebar"] > div { background:#ffffff !important; }
-section[data-testid="stSidebar"] .block-container { padding:1.25rem .85rem; }
+section[data-testid="stSidebar"], section[data-testid="stSidebar"] > div { background:#fff !important; border-right:1px solid #dfe5ec; }
 section[data-testid="stSidebar"] * { color:#526274; }
-section[data-testid="stSidebar"] .erp-brand { color:#20354b !important; }
-section[data-testid="stSidebar"] label { color:#526274 !important; font-weight:600; }
-section[data-testid="stSidebar"] [data-testid="stRadio"] label { color:#526274 !important; }
-section[data-testid="stSidebar"] [data-testid="stRadio"] [data-testid="stMarkdownContainer"] p { color:#526274 !important; }
-section[data-testid="stSidebar"] .stCaption, section[data-testid="stSidebar"] .stCaption * { color:#7a8795 !important; }
-section[data-testid="stSidebar"] hr { border-color:#e5e9ef; }
-.erp-brand { font-size:1.05rem; font-weight:800; color:#20354b !important; padding:.4rem .55rem 1rem; letter-spacing:.1px; }
-.hero { background:linear-gradient(135deg,#f5f8fc 0%,#e9f0f8 100%); border:1px solid #dfe6ee; border-radius:22px; padding:1.25rem 1.5rem; margin-bottom:1rem; box-shadow:0 5px 18px rgba(24,45,70,.06); }
-.hero h1 { margin:0; color:#1d3854 !important; font-size:2.15rem; text-align:center; letter-spacing:.2px; }
+.erp-brand { font-size:1.05rem; font-weight:800; color:#20354b !important; padding:.4rem .55rem 1rem; }
+.hero { background:linear-gradient(135deg,#f5f8fc,#e9f0f8); border:1px solid #dfe6ee; border-radius:22px; padding:1.25rem 1.5rem; margin-bottom:1rem; box-shadow:0 5px 18px rgba(24,45,70,.06); }
+.hero h1 { margin:0; color:#1d3854 !important; font-size:2.15rem; text-align:center; }
 .hero .sub,.hero .identity { text-align:center; color:#53677d !important; font-weight:600; margin-top:.35rem; }
 .section-title { color:#1f3852 !important; font-size:1.55rem; font-weight:800; margin:1.35rem 0 .65rem; }
 .metric-card { background:#123b70; color:#fff !important; border-radius:18px; padding:1rem .8rem; min-height:112px; display:flex; flex-direction:column; justify-content:center; text-align:center; box-shadow:0 7px 15px rgba(14,48,89,.14); }
-.metric-card .value { color:#fff !important; font-size:1.65rem; font-weight:850; margin:.25rem 0; }
-.metric-card .label { color:#fff !important; font-size:.9rem; font-weight:700; line-height:1.25; }
+.metric-card .value,.metric-card .label { color:#fff !important; }
+.metric-card .value { font-size:1.65rem; font-weight:850; }
+.metric-card .label { font-size:.9rem; font-weight:700; }
 .timeline { border-left:3px solid #163f74; margin:.2rem 0 0 1rem; padding-left:1.4rem; }
 .timeline-item { position:relative; margin:0 0 1rem; }
 .timeline-item:before { content:""; position:absolute; width:11px; height:11px; border-radius:50%; background:#ffd400; border:2px solid #153f73; left:-1.82rem; top:.75rem; }
-.timeline-time { color:#17457e !important; font-weight:850; margin-bottom:.35rem; }
-.class-card { background:#ffffff; border:1px solid #e0e6ed; border-radius:13px; padding:.75rem 1rem; box-shadow:0 3px 8px rgba(30,55,80,.06); }
-.class-course { font-size:1rem; font-weight:800; color:#1e3b59 !important; }
-.class-meta { color:#5f7082 !important; font-size:.86rem; margin-top:.15rem; }
-.small-note { color:#718096 !important; font-size:.82rem; }
-.stMarkdown, .stText, .stCaption, p, label { color:#20354b; }
-div[data-testid="stDataFrame"] { border:1px solid #e1e6ed; border-radius:12px; overflow:hidden; background:#fff; }
-div[data-testid="stFileUploader"] { background:#fff; border:1px solid #e1e6ed; border-radius:12px; padding:.4rem; }
+.timeline-time { color:#17457e !important; font-weight:850; }
+.class-card { background:#fff; border:1px solid #e0e6ed; border-radius:13px; padding:.75rem 1rem; box-shadow:0 3px 8px rgba(30,55,80,.06); }
+.class-course { font-weight:800; color:#1e3b59 !important; }
+.class-meta { color:#5f7082 !important; font-size:.86rem; }
+div[data-testid="stDataFrame"], div[data-testid="stFileUploader"] { border:1px solid #e1e6ed; border-radius:12px; overflow:hidden; background:#fff; }
 button[kind="primary"] { background:#123b70 !important; color:#fff !important; }
-button[kind="secondary"] { color:#20354b !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -90,7 +80,7 @@ if page == "Dashboard":
         order={s:i for i,s in enumerate(["09:00-10:00","10:00-11:00","11:15-12:15","12:15-13:15","14:00-15:00","15:00-16:00"])}
         for row in sorted(today_classes,key=lambda x:order.get(x["slot"],99)):
             st.markdown(f'<div class="timeline-item"><div class="timeline-time">{row["slot"]}</div><div class="class-card"><div class="class-course">{row["course"]}</div><div class="class-meta">{row["teacher"]} · Room {row["room"]} · {row["group"]}</div></div></div>',unsafe_allow_html=True)
-        st.markdown('</div>',unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
     else: st.info(f"No scheduled classes for {selected_group} today ({today_name}).")
     c1,c2=st.columns(2)
     with c1:
@@ -99,19 +89,21 @@ if page == "Dashboard":
     with c2:
         st.markdown('<div class="section-title">Recent AASE operations</div>',unsafe_allow_html=True)
         runs=recent_runs(6)
-        st.dataframe(pd.DataFrame(runs)[["created_at","operation","status","summary"]],use_container_width=True,hide_index=True) if runs else st.info("No optimization runs yet.")
+        if runs: st.dataframe(pd.DataFrame(runs)[["created_at","operation","status","summary"]],use_container_width=True,hide_index=True)
+        else: st.info("No optimization runs yet.")
 
 elif page == "Time Table":
-    st.markdown('<div class="section-title">Current Timetable</div>',unsafe_allow_html=True)
-    st.dataframe(pd.DataFrame(data["classes"]),use_container_width=True,hide_index=True)
-    st.markdown("### Import timetable PDFs")
-    files=st.file_uploader("Upload one or more timetable PDFs",type=["pdf"],accept_multiple_files=True)
-    use_ocr=st.checkbox("Use Tesseract OCR for scanned PDFs",value=False)
-    if use_ocr: st.info("Scanned pages will be rendered locally and processed with Tesseract OCR. No cloud account or API key is required.")
-    if files and st.button("Import into AASE database",type="primary"):
+    st.markdown('<div class="section-title">Timetable Intake</div>',unsafe_allow_html=True)
+    st.caption("Upload PDF, CSV or Excel. CSV/XLSX are parsed directly; PDF text is extracted first and scanned PDFs can fall back to local Tesseract OCR.")
+    files=st.file_uploader("Upload timetable files",type=["pdf","csv","xlsx"],accept_multiple_files=True)
+    use_ocr=st.checkbox("Enable Tesseract fallback for scanned PDFs",value=True)
+    if files and st.button("Parse & import timetable",type="primary"):
         imported=[]
         for f in files:
-            try: imported.extend(parse_timetable_pdf(f,use_ocr=use_ocr,default_group=selected_group))
+            try:
+                rows, source = parse_timetable_file(f,default_group=selected_group,use_ocr=use_ocr)
+                imported.extend(rows)
+                st.success(f"{f.name}: {len(rows)} row(s) parsed via {source}.")
             except Exception as exc: st.error(f"Could not process {f.name}: {exc}")
         if imported:
             imported_data={"classes":imported,"teachers":[],"rooms":[],"students":[{"id":selected_group,"size":0}]}
@@ -119,9 +111,9 @@ elif page == "Time Table":
             room_names=sorted({x["room"] for x in imported if x["room"]!="UNKNOWN"})
             imported_data["teachers"]=[{"name":t,"qualified_courses":sorted({x["course"] for x in imported if x["teacher"]==t}),"available_slots":{}} for t in teacher_names]
             imported_data["rooms"]=[{"name":r,"capacity":60} for r in room_names]
-            seed_from_data(imported_data,source="pdf_ocr" if use_ocr else "pdf",replace_classes=True)
+            seed_from_data(imported_data,source="document_import",replace_classes=True)
             st.success(f"Imported {len(imported)} timetable record(s) into SQLite.")
-            st.rerun()
+            st.dataframe(pd.DataFrame(imported),use_container_width=True,hide_index=True)
 
 elif page == "Teachers":
     st.markdown('<div class="section-title">Teacher Metadata & Availability</div>',unsafe_allow_html=True)
@@ -141,25 +133,28 @@ elif page == "Rooms":
 
 elif page == "Academic Calendar":
     st.markdown('<div class="section-title">Academic Calendar Intelligence</div>',unsafe_allow_html=True)
-    calendar_file=st.file_uploader("Upload academic calendar",type=["pdf","csv","xlsx"])
+    calendar_file=st.file_uploader("Upload academic calendar",type=["pdf","csv","xlsx"],key="calendar_upload")
     restricted=st.checkbox("Treat restricted holidays as blocked",value=False)
     if calendar_file and st.button("Parse & save calendar",type="primary"):
         try:
-            events,warnings=parse_academic_calendar(calendar_file); save_calendar(events)
+            events,warnings=parse_academic_calendar(calendar_file,use_ocr=True)
+            save_calendar(events,restricted_as_holiday=restricted)
             for w in warnings: st.warning(w)
-            st.success(f"Saved {len(events)} calendar event(s) to SQLite.")
-            st.dataframe(pd.DataFrame(events),use_container_width=True,hide_index=True)
+            if events:
+                st.success(f"Saved {len(events)} calendar event(s) to SQLite.")
+                st.dataframe(pd.DataFrame(events),use_container_width=True,hide_index=True)
+            else: st.error("No calendar events were parsed, so nothing was saved.")
         except Exception as exc: st.error(f"Could not process academic calendar: {exc}")
-    else: st.caption("Upload a calendar to parse holidays, restricted holidays and academic events.")
+    else: st.caption("Supported: PDF, CSV, XLSX. Scanned PDFs automatically fall back to Tesseract when needed.")
 
 elif page == "OCR Intake":
     st.markdown('<div class="section-title">Document Intake & OCR</div>',unsafe_allow_html=True)
-    st.info("AASE uses direct PDF text extraction when possible and local Tesseract OCR for scanned PDFs. OCR output is converted into normalized SQLite records before optimization.")
-    st.code("PDF → direct text extraction / Tesseract OCR → timetable parser → SQLite → CP-SAT",language="text")
+    st.info("AASE accepts PDF, CSV and XLSX for timetable and academic-calendar intake. OCR is only needed when a PDF contains images/scans instead of selectable text.")
+    st.code("PDF → text extraction → parser → SQLite\nScanned PDF → Tesseract OCR → parser → SQLite\nCSV/XLSX → pandas → normalized records → SQLite",language="text")
     st.markdown("### Tesseract configuration")
-    st.write("Install Tesseract OCR on the computer running AASE. If it is not on PATH, set the TESSERACT_CMD environment variable to the full path of tesseract.exe.")
+    st.write("Install Tesseract 5.x locally. If it is not on PATH, set TESSERACT_CMD to the full tesseract.exe path.")
     st.code('Windows example:\nTESSERACT_CMD=C:\\Program Files\\Tesseract-OCR\\tesseract.exe',language="text")
-    st.success("OCR is local, free, and requires no Google Cloud account or API key.")
+    st.success("OCR is local and free; no Google Cloud account or API key is required.")
 
 elif page == "Disruptions":
     st.markdown('<div class="section-title">Disruption Management</div>',unsafe_allow_html=True)
@@ -170,14 +165,15 @@ elif page == "Disruptions":
         result=simulate_disruption(data,disruption_type,target,time_limit=10); st.session_state["last_result"]=result; record_run("Disruption simulation",result.get("status","UNKNOWN"),result.get("summary",""))
     if "last_result" in st.session_state:
         result=st.session_state["last_result"]
-        (st.success if result.get("changed") else st.warning)(result.get("summary","Completed."))
+        (st.success if result.get("status") in {"OPTIMAL","FEASIBLE"} or result.get("changed") else st.warning)(result.get("summary","Completed."))
         if result.get("schedule"): st.dataframe(pd.DataFrame(result["schedule"]),use_container_width=True,hide_index=True)
         for r in result.get("reasons",[]): st.write("• "+r)
 
 elif page == "Optimization":
     st.markdown('<div class="section-title">AASE Optimization Engine</div>',unsafe_allow_html=True)
     operation=st.selectbox("Operation",["Optimize whole timetable","Repair one disruption","Heuristic repair","Robustness analysis"])
-    absent_teacher=st.selectbox("Absent teacher",sorted({t["name"] for t in data["teachers"]})) if data["teachers"] else ""
+    teacher_names=sorted({t["name"] for t in data["teachers"]})
+    absent_teacher=st.selectbox("Absent teacher",teacher_names) if teacher_names else ""
     c1,c2=st.columns(2)
     with c1: absent_day=st.selectbox("Day",["Monday","Tuesday","Wednesday","Thursday","Friday"])
     with c2: absent_slot=st.selectbox("Slot",["09:00-10:00","10:00-11:00","11:15-12:15","12:15-13:15","14:00-15:00","15:00-16:00"])
