@@ -3,7 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import date
 
-from optimizer import DAYS, optimize_whole_timetable
+from optimizer import DAYS, SLOTS, optimize_whole_timetable
 
 
 def calendar_day_penalties(events, restricted_as_holiday=False, semester_start=None, semester_end=None):
@@ -89,9 +89,14 @@ def simulate_disruption(data, disruption_type, target_name, day=None, slot=None,
         if not affected:
             return {"status": "NO_MATCH", "summary": f"No classes use teacher {target_name} for the requested disruption."}
         if day is not None and slot is not None:
+            def _without_slot(teacher):
+                # Keep the rest of the week; empty availability means "free all week".
+                avail = {d: list(v) for d, v in teacher.get("available_slots", {}).items()} or {d: list(SLOTS) for d in DAYS}
+                avail[day] = [s for s in avail.get(day, []) if s != slot]
+                return {**teacher, "available_slots": avail}
+
             trial["teachers"] = [
-                ({**teacher, "available_slots": {day: [s for s in teacher.get("available_slots", {}).get(day, SLOTS) if s != slot]}}
-                 if teacher.get("name") == target_name else teacher)
+                _without_slot(teacher) if teacher.get("name") == target_name else teacher
                 for teacher in trial.get("teachers", [])
             ]
         else:
