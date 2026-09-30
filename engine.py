@@ -5,20 +5,17 @@ from ocr_parser import parse_ocr_timetable
 
 SLOTS = ["09:00-10:00","10:00-11:00","11:15-12:15","12:15-13:15","14:00-15:00","15:00-16:00"]
 
+
 def load_demo_data():
     return json.loads(Path("demo/data.json").read_text(encoding="utf-8"))
 
+
 def parse_timetable_pdf(uploaded_file, use_ocr=False, default_group="OCR-GROUP", cloud_ocr_config=None):
+    """Parse a timetable PDF using native extraction or local Tesseract OCR."""
     if use_ocr:
-        config = cloud_ocr_config or {}
-        records, pages, warnings = parse_ocr_timetable(
-            uploaded_file,
-            default_group=default_group,
-            project_id=config.get("project_id", ""),
-            location=config.get("location", "us"),
-            processor_id=config.get("processor_id", ""),
-        )
+        records, _, _ = parse_ocr_timetable(uploaded_file, default_group=default_group)
         return records
+
     from pypdf import PdfReader
     reader = PdfReader(BytesIO(uploaded_file.getvalue()))
     text = "\n".join(page.extract_text() or "" for page in reader.pages)
@@ -28,14 +25,16 @@ def parse_timetable_pdf(uploaded_file, use_ocr=False, default_group="OCR-GROUP",
         "source_text": text[:4000]
     }]
 
+
 def gap_score(schedule, student_id):
     score = 0
-    for day in ["Monday","Tuesday","Wednesday","Thursday","Friday"]:
+    for day in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]:
         day_items = sorted([x for x in schedule if x["group"] == student_id and x["day"] == day],
                            key=lambda x: SLOTS.index(x["slot"]) if x["slot"] in SLOTS else 99)
         positions = [SLOTS.index(x["slot"]) for x in day_items if x["slot"] in SLOTS]
         score += sum(max(0, positions[i+1] - positions[i] - 1) for i in range(len(positions)-1))
     return score
+
 
 def repair_schedule(data, absent_day, absent_slot, absent_teacher, student_id):
     schedule = [x.copy() for x in data["classes"]]
@@ -46,7 +45,7 @@ def repair_schedule(data, absent_day, absent_slot, absent_teacher, student_id):
     original_gap = gap_score(schedule, student_id)
     candidates = []
     teacher = next((t for t in data["teachers"] if t["name"] == target["teacher"]), None)
-    for day in ["Monday","Tuesday","Wednesday","Thursday","Friday"]:
+    for day in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]:
         for slot in SLOTS:
             if day == absent_day and slot == absent_slot:
                 continue
