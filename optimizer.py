@@ -68,6 +68,8 @@ def _add_gap_objective(model, candidates, classes):
                         model.Add(adjacent >= occupancy[left] + occupancy[right] - 1)
                     gap_terms.append((right - left - 1) * adjacent)
     return gap_terms
+
+
 def _apply_absence(data, absent_teacher, absent_day, absent_slot):
     """Return a copy of data where absent_teacher is unavailable for exactly one day/slot."""
     trial = deepcopy(data)
@@ -91,12 +93,13 @@ def _apply_absence(data, absent_teacher, absent_day, absent_slot):
         if original:
             base = {d: list(original.get(d, [])) for d in DAYS}
         else:
-            base = {d: list(SLOTS) for d in DAYS}   # empty = available everywhere
+            base = {d: list(SLOTS) for d in DAYS}  # empty = available everywhere
         base[absent_day] = [s for s in base[absent_day] if s != absent_slot]
         teachers[absent_teacher] = {**t, "available_slots": base}
 
     trial["teachers"] = list(teachers.values())
     return trial
+
 
 def optimize_whole_timetable(data, time_limit=15, absent_teacher=None, absent_day=None, absent_slot=None):
     if absent_teacher and absent_day and absent_slot:
@@ -195,9 +198,13 @@ def optimize_timetable(data, student_id=None, absent_teacher=None, absent_day=No
     if not target:
         return {"changed": False, "status": "NO_MATCH", "summary": "No class matched that teacher/day/slot.", "schedule": classes, "reasons": []}
 
-        trial = _apply_absence(data, absent_teacher, absent_day, absent_slot)
-
-    result = optimize_whole_timetable(trial, time_limit=time_limit)
+    result = optimize_whole_timetable(
+        data,
+        time_limit=time_limit,
+        absent_teacher=absent_teacher,
+        absent_day=absent_day,
+        absent_slot=absent_slot,
+    )
     if result.get("status") not in ("OPTIMAL", "FEASIBLE"):
         return {"changed": False, "status": result.get("status", "INFEASIBLE"), "summary": "No feasible repair found.", "schedule": classes, "reasons": result.get("reasons", [])}
     result["summary"] = "CP-SAT repair found a globally consistent timetable around the teacher disruption."
