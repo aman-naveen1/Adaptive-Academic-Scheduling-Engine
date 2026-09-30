@@ -1,0 +1,23 @@
+# Local runtime database
+*.db
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Streamlit secrets / local credentials
+.streamlit/secrets.toml
+.env
+*.json.key
+service-account*.json
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
