@@ -7,10 +7,6 @@ import re
 import pandas as pd
 
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-SLOTS = [
-    "09:00-10:00", "10:00-11:00", "11:15-12:15", "12:15-13:15",
-    "14:00-15:00", "15:00-16:00", "16:00-17:00", "17:00-18:00", "17:30-18:30",
-]
 SLOT_RE = re.compile(r"(\d{1,2})\s*[:.]?\s*(\d{2})\s*[-–]\s*(\d{1,2})\s*[:.]?\s*(\d{2})")
 ALIASES = {
     "day": {"day", "weekday", "date_day"},
@@ -38,8 +34,7 @@ def _canonical_columns(frame):
 
 
 def _normalise_slot(value):
-    text = str(value).strip()
-    match = SLOT_RE.search(text)
+    match = SLOT_RE.search(str(value).strip())
     if not match:
         return None
     h1, m1, h2, m2 = map(int, match.groups())
@@ -60,28 +55,18 @@ def parse_timetable_dataframe(frame, default_group="OCR-GROUP"):
     missing = [c for c in required if c not in frame.columns]
     if missing:
         raise ValueError("Timetable file is missing required columns: " + ", ".join(missing))
-
     records = []
     for _, row in frame.iterrows():
         course = str(row.get("course", "")).strip()
         if not course or course.lower() == "nan":
             continue
-        day = _normalise_day(row.get("day", ""))
-        slot = _normalise_slot(row.get("slot", ""))
+        day, slot = _normalise_day(row.get("day", "")), _normalise_slot(row.get("slot", ""))
         if not day or not slot:
             continue
         def value(name, fallback="UNKNOWN"):
-            raw = row.get(name, fallback)
-            text = str(raw).strip()
+            text = str(row.get(name, fallback)).strip()
             return fallback if not text or text.lower() == "nan" else text
-        records.append({
-            "day": day,
-            "slot": slot,
-            "course": course,
-            "teacher": value("teacher"),
-            "room": value("room"),
-            "group": value("group", default_group),
-        })
+        records.append({"day": day, "slot": slot, "course": course, "teacher": value("teacher"), "room": value("room"), "group": value("group", default_group)})
     if not records:
         raise ValueError("No valid timetable rows were found in the uploaded file.")
     return records
@@ -91,46 +76,69 @@ def _split_text_line(line):
     return [x.strip() for x in re.split(r"\t+|\s{2,}|\|", line) if x.strip()]
 
 
+def _extract_pdf_row(raw, current_day, default_group):
+    slot_match = SLOT_RE.search(raw)
+    if not slot_match:
+        return None
+    slot = _normalise_slot(slot_match.group(0))
+    cleaned = SLOT_RE.sub(" ", raw).strip(" |:-")
+    cleaned = re.sub(rf"^\s*{re.escape(current_day)}\b", "", cleaned, flags=re.I).strip(" |:-")
+
+    room_match = re.search(r"\b(?:room\s*)?(?:c[- ]?\d+|lab[- ]?\d+)\b", cleaned, re.I)
+    group_match = re.search(r"\b(?:bsc|bca|mca|section|sec|group|batch)[-A-Za-z0-9]*\b", cleaned, re.I)
+    room = room_match.group(0).strip() if room_match else "UNKNOWN"
+    group = group_match.group(0).strip() if group_match else default_group
+
+    # Prefer explicit faculty titles. For PDFs that lost column spacing, use the
+    # final two words before the room/group as a conservative faculty fallback.
+    teacher_match = re.search(r"\b(?:dr|prof|mr|ms|mrs)\.?\s+[A-Za-z][A-Za-z .'-]+?(?=\s+(?:room\s*)?(?:c[- ]?\d+|lab[- ]?\d+)|\s+(?:bsc|bca|mca|section|sec|group|batch)\b|$)", cleaned, re.I)
+    if teacher_match:
+        teacher = teacher_match.group(0).strip()
+        prefix = cleaned[:teacher_match.start()].strip(" |:-")
+    else:
+        boundary = len(cleaned)
+        for match in (room_match, group_match):
+            if match:
+                boundary = min(boundary, match.start())
+        middle = cleaned[:boundary].strip(" |:-")
+        words = middle.split()
+        if len(words) >= 3:
+            teacher = " ".join(words[-2:])
+            prefix = " ".join(words[:-2])
+        elif len(words) == 2:
+            teacher, prefix = words[-1], words[0]
+        else:
+            teacher, prefix = "UNKNOWN", middle
+
+    course = prefix.strip(" |:-") or "UNKNOWN"
+    return {"day": current_day, "slot": slot, "course": course, "teacher": teacher, "room": room, "group": group}
+
+
 def parse_timetable_text(text, default_group="OCR-GROUP"):
     records = []
     current_day = None
     for raw in text.splitlines():
-        line = re.sub(r"\s+", " ", raw).strip(" |:-")
-        if not line:
+        if not raw.strip():
             continue
         for day in DAYS:
-            if re.search(rf"\b{day}\b", line, re.I):
+            if re.search(rf"\b{day}\b", raw, re.I):
                 current_day = day
                 break
-        slot_match = SLOT_RE.search(line)
-        if not slot_match or not current_day:
-            continue
-        slot = _normalise_slot(slot_match.group(0))
-        cleaned = SLOT_RE.sub(" ", line)
-        cols = _split_text_line(cleaned)
-        cols = [c for c in cols if c.lower() not in {current_day.lower(), current_day[:3].lower()}]
-        if not cols:
-            continue
-        course = cols[0]
-        teacher = next((c for c in cols[1:] if re.search(r"\b(?:dr|prof|mr|ms|mrs)\.?\s*[a-z]", c, re.I)), None)
-        room = next((c for c in cols[1:] if re.search(r"\b(?:room|c[- ]?\d+|lab[- ]?\d+)\b", c, re.I)), None)
-        group = next((c for c in cols[1:] if re.search(r"\b(?:bsc|bca|mca|section|sec|group|batch)\b", c, re.I)), default_group)
-        teacher = teacher or (cols[1] if len(cols) > 1 else "UNKNOWN")
-        room = room or (cols[2] if len(cols) > 2 else "UNKNOWN")
-        records.append({"day": current_day, "slot": slot, "course": course, "teacher": teacher, "room": room, "group": group})
+        if current_day:
+            row = _extract_pdf_row(raw, current_day, default_group)
+            if row:
+                records.append(row)
     return records
 
 
 def parse_timetable_file(uploaded_file, default_group="OCR-GROUP", use_ocr=False):
-    """Parse timetable PDF, CSV or XLSX. PDF uses text extraction first and Tesseract only when requested/needed."""
+    """Parse timetable PDF, CSV or XLSX. PDF uses text extraction first and Tesseract only when needed."""
     name = getattr(uploaded_file, "name", "timetable")
     suffix = Path(name).suffix.lower()
     if suffix == ".csv":
-        frame = pd.read_csv(BytesIO(uploaded_file.getvalue()))
-        return parse_timetable_dataframe(frame, default_group), "csv"
+        return parse_timetable_dataframe(pd.read_csv(BytesIO(uploaded_file.getvalue())), default_group), "csv"
     if suffix in {".xlsx", ".xls"}:
-        frame = pd.read_excel(BytesIO(uploaded_file.getvalue()))
-        return parse_timetable_dataframe(frame, default_group), "xlsx"
+        return parse_timetable_dataframe(pd.read_excel(BytesIO(uploaded_file.getvalue())), default_group), "xlsx"
     if suffix != ".pdf":
         raise ValueError("Supported timetable formats: PDF, CSV, XLSX.")
 
