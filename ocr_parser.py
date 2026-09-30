@@ -1,7 +1,6 @@
-import json
 import os
 import re
-from pathlib import Path
+from io import BytesIO
 
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 SLOT_PATTERNS = [
@@ -36,86 +35,47 @@ def _split_columns(line):
     return [_clean(p) for p in re.split(r"\t+|\s{2,}|\|", line) if _clean(p)]
 
 
-def _service_account_credentials():
-    """Load Google credentials without putting a service-account key in source control."""
-    from google.oauth2 import service_account
-
-    raw = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON", "").strip()
-    if raw:
-        return service_account.Credentials.from_service_account_info(json.loads(raw))
-
-    path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
-    if path and Path(path).exists():
-        return service_account.Credentials.from_service_account_file(path)
-
-    # Falls back to Application Default Credentials (useful on Google Cloud).
-    return None
-
-
-def _cloud_ocr_pdf(uploaded_file, project_id, location="us", processor_id=""):
-    """Run Google Cloud Document AI OCR on a PDF and return text/layout metadata."""
+def _ocr_pages(uploaded_file):
+    """Run local Tesseract OCR against each rendered PDF page."""
     try:
-        from google.api_core.client_options import ClientOptions
-        from google.cloud import documentai_v1 as documentai
+        import fitz
+        import pytesseract
+        from PIL import Image
     except ImportError as exc:
+        raise RuntimeError("Install OCR dependencies with: python -m pip install -r requirements.txt") from exc
+
+    # Allow advanced users to configure a non-default Tesseract installation.
+    tesseract_cmd = os.getenv("TESSERACT_CMD", "").strip()
+    if tesseract_cmd:
+        pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+
+    try:
+        pytesseract.get_tesseract_version()
+    except Exception as exc:
         raise RuntimeError(
-            "Google Cloud Document AI dependencies are missing. Install google-cloud-documentai."
+            "Tesseract OCR is not installed or is not available on PATH. "
+            "Install Tesseract OCR and restart your terminal, or set TESSERACT_CMD to the full tesseract.exe path."
         ) from exc
 
-    if not project_id:
-        raise RuntimeError("Google Cloud project ID is required for cloud OCR.")
-    if not processor_id:
-        raise RuntimeError("Google Document AI processor ID is required for cloud OCR.")
-
-    credentials = _service_account_credentials()
-    endpoint = f"{location}-documentai.googleapis.com" if location != "us" else "us-documentai.googleapis.com"
-    client_options = ClientOptions(api_endpoint=endpoint)
-    client = documentai.DocumentProcessorServiceClient(
-        credentials=credentials, client_options=client_options
-    )
-
-    name = client.processor_path(project_id, location, processor_id)
-    raw_document = documentai.RawDocument(
-        content=uploaded_file.getvalue(), mime_type="application/pdf"
-    )
-    request = documentai.ProcessRequest(name=name, raw_document=raw_document)
-    result = client.process_document(request=request)
-    document = result.document
-
-    text = document.text or ""
-    return [{
-        "page": index + 1,
-        "text": page_text,
-        "confidence": 100.0,
-    } for index, page_text in enumerate(_page_texts(document, text))]
-
-
-def _page_texts(document, full_text):
-    """Recover page text from Document AI text anchors; fall back to whole text."""
+    document = fitz.open(stream=uploaded_file.getvalue(), filetype="pdf")
     pages = []
-    for page in document.pages:
-        chunks = []
-        for block in page.blocks:
-            anchor = getattr(block, "layout", None).text_anchor if getattr(block, "layout", None) else None
-            if not anchor:
-                continue
-            for segment in anchor.text_segments:
-                start = int(segment.start_index or 0)
-                end = int(segment.end_index or 0)
-                chunks.append(full_text[start:end])
-        pages.append("\n".join(chunks).strip())
-    return pages or [full_text]
+    try:
+        for page_number, page in enumerate(document, start=1):
+            # 2x rendering improves OCR accuracy for small timetable text.
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+            image = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            text = pytesseract.image_to_string(image, config="--psm 6")
+            pages.append({"page": page_number, "text": text, "confidence": None})
+    finally:
+        document.close()
+    return pages
 
 
-def parse_ocr_timetable(uploaded_file, default_group="OCR-GROUP", project_id="", location="us", processor_id=""):
-    """Parse a timetable using cloud OCR. No local Tesseract executable is required."""
-    pages = _cloud_ocr_pdf(
-        uploaded_file,
-        project_id=project_id,
-        location=location,
-        processor_id=processor_id,
-    )
+def parse_ocr_timetable(uploaded_file, default_group="OCR-GROUP"):
+    """OCR a scanned timetable locally with Tesseract and normalize timetable rows."""
+    pages = _ocr_pages(uploaded_file)
     records, warnings = [], []
+
     for page in pages:
         current_day = None
         for raw in page["text"].splitlines():
@@ -128,11 +88,13 @@ def parse_ocr_timetable(uploaded_file, default_group="OCR-GROUP", project_id="",
             slot = _extract_slot(line)
             if not slot or not current_day:
                 continue
+
             cleaned = line
             for pattern, _ in SLOT_PATTERNS:
                 cleaned = pattern.sub(" ", cleaned)
             cols = _split_columns(cleaned)
             cols = [c for c in cols if c.lower() not in {current_day.lower(), current_day[:3].lower()}]
+
             course = cols[0] if cols else "UNKNOWN"
             teacher = next(
                 (c for c in cols[1:] if re.search(r"\b(?:dr|prof|mr|ms|mrs)\.?\s*[a-z]", c, re.I)),
@@ -150,6 +112,7 @@ def parse_ocr_timetable(uploaded_file, default_group="OCR-GROUP", project_id="",
                 teacher = cols[1]
             if room == "UNKNOWN" and len(cols) >= 3:
                 room = cols[2]
+
             records.append({
                 "day": current_day,
                 "slot": slot,
@@ -160,6 +123,7 @@ def parse_ocr_timetable(uploaded_file, default_group="OCR-GROUP", project_id="",
                 "ocr_confidence": page["confidence"],
                 "source_page": page["page"],
             })
+
     if not records:
-        warnings.append("Cloud OCR found no timetable rows matching the configured day/time patterns.")
+        warnings.append("Tesseract found no timetable rows matching the configured day/time patterns.")
     return records, pages, warnings
