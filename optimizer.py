@@ -68,7 +68,35 @@ def _add_gap_objective(model, candidates, classes):
                         model.Add(adjacent >= occupancy[left] + occupancy[right] - 1)
                     gap_terms.append((right - left - 1) * adjacent)
     return gap_terms
+def _apply_absence(data, absent_teacher, absent_day, absent_slot):
+    """Return a copy of data where absent_teacher is unavailable for exactly one day/slot."""
+    trial = deepcopy(data)
+    classes = trial.get("classes", [])
+    teachers = {t["name"]: t for t in trial.get("teachers", [])}
 
+    # Every teacher in the timetable needs an entry, otherwise adding just one
+    # switches off "no metadata" mode for everyone else.
+    for c in classes:
+        name = c["teacher"]
+        if name not in teachers:
+            teachers[name] = {
+                "name": name,
+                "qualified_courses": sorted({x["course"] for x in classes if x["teacher"] == name}),
+                "available_slots": {},
+            }
+
+    t = teachers.get(absent_teacher)
+    if t is not None:
+        original = t.get("available_slots") or {}
+        if original:
+            base = {d: list(original.get(d, [])) for d in DAYS}
+        else:
+            base = {d: list(SLOTS) for d in DAYS}   # empty = available everywhere
+        base[absent_day] = [s for s in base[absent_day] if s != absent_slot]
+        teachers[absent_teacher] = {**t, "available_slots": base}
+
+    trial["teachers"] = list(teachers.values())
+    return trial
 
 def optimize_whole_timetable(data, time_limit=15):
     classes = [dict(x) for x in data.get("classes", [])]
