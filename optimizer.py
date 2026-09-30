@@ -60,7 +60,9 @@ def _add_gap_objective(model, candidates, classes):
                     model.Add(adjacent <= occupancy[left])
                     model.Add(adjacent <= occupancy[right])
                     if middle:
-                        model.Add(adjacent <= 1 - sum(middle))
+                        # adjacent means "both ends used and every slot between them empty"
+                        for m in middle:
+                            model.Add(adjacent + m <= 1)
                         model.Add(adjacent >= occupancy[left] + occupancy[right] - 1 - sum(middle))
                     else:
                         model.Add(adjacent >= occupancy[left] + occupancy[right] - 1)
@@ -114,7 +116,7 @@ def optimize_whole_timetable(data, time_limit=15):
         for v, d, s, t, r in choices:
             cost = (
                 calendar_penalties.get(d, 0) * 8
-                + (0 if (d, s) == (c["day"], c["slot"]) else 3)
+                + (0 if (d, s) == (c["day"], c["slot"]) else 3 if d == c["day"] else 4)  # moving days is more disruptive
                 + (0 if t == c["teacher"] else 5)
                 + (0 if r == c["room"] else 1)
             )
@@ -172,8 +174,16 @@ def optimize_timetable(data, student_id=None, absent_teacher=None, absent_day=No
             replacement.append({**teacher, "available_slots": slots})
         else:
             replacement.append(teacher)
-    if absent_teacher not in existing:
-        replacement.append({"name": absent_teacher, "qualified_courses": [target["course"]], "available_slots": {d: ([s for s in SLOTS if not (d == absent_day and s == absent_slot)]) for d in DAYS}})
+    # Teachers that appear in the timetable but not in the metadata still need an entry,
+    # otherwise adding just one teacher would switch off "no metadata" mode for everyone else.
+    for c in classes:
+        name = c["teacher"]
+        if name in existing:
+            continue
+        existing.add(name)
+        courses = sorted({x["course"] for x in classes if x["teacher"] == name})
+        slots = {d: [s for s in SLOTS if not (name == absent_teacher and d == absent_day and s == absent_slot)] for d in DAYS}
+        replacement.append({"name": name, "qualified_courses": courses, "available_slots": slots})
     trial["teachers"] = replacement
 
     result = optimize_whole_timetable(trial, time_limit=time_limit)

@@ -80,7 +80,7 @@ def _classify(text: str):
     # Resumption/opening events are not holidays just because they mention one.
     if re.search(r"\b(classes?|college|university)\s+(resume|reopen|re-start|restart)|resume\s+after|reopen\s+after", value):
         return "academic_event"
-    if re.search(r"restricted\s+holiday|optional\s+holiday|\brestricted\b|\brh\b", value):
+    if re.search(r"restricted\s+holiday|optional\s+holiday|\brestricted\b|[\(\[]\s*rh\s*[\)\]]|[-|:,]\s*rh\s*$", value):
         return "restricted_holiday"
     if re.search(r"public\s+holiday|national\s+holiday|holiday|vacation|college\s+closed|no\s+classes|closed\s+for\s+the\s+day", value):
         return "holiday"
