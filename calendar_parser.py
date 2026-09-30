@@ -6,27 +6,16 @@ from pathlib import Path
 import csv
 import re
 
-
-# Support common academic-calendar formats, including ISO dates used by CSV/XLSX
-# exports (YYYY-MM-DD / YYYY/MM/DD) and Indian-style DD-MM-YYYY / DD/MM/YYYY.
 DATE_PATTERNS = [
     re.compile(r"\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b"),
     re.compile(r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b"),
     re.compile(r"\b(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{4})\b"),
     re.compile(r"\b([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(\d{4})\b"),
 ]
-
-MONTHS = {
-    name.lower(): i
-    for i, name in enumerate(
-        [
-            "January", "February", "March", "April", "May", "June",
-            "July", "August", "September", "October", "November", "December",
-        ],
-        1,
-    )
-}
-
+MONTHS = {name.lower(): i for i, name in enumerate([
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+], 1)}
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 
 
@@ -35,19 +24,14 @@ def _parse_date(text: str):
         match = pattern.search(text)
         if not match:
             continue
-
         parts = match.groups()
         try:
-            # YYYY-MM-DD / YYYY/MM/DD
             if index == 0:
                 return date(int(parts[0]), int(parts[1]), int(parts[2]))
-            # DD-MM-YYYY / DD/MM/YYYY
             if index == 1:
                 return date(int(parts[2]), int(parts[1]), int(parts[0]))
-            # DD Month YYYY
             if index == 2:
                 return date(int(parts[2]), MONTHS[parts[1].lower()], int(parts[0]))
-            # Month DD YYYY
             return date(int(parts[2]), MONTHS[parts[0].lower()], int(parts[1]))
         except (ValueError, KeyError):
             pass
@@ -72,51 +56,69 @@ def _event(date_value, text, source=""):
     }
 
 
-def parse_academic_calendar(uploaded_file):
-    """Parse PDF/CSV/XLSX academic calendars into normalized dated events."""
+def _lines_from_file(uploaded_file):
     name = getattr(uploaded_file, "name", "calendar")
     suffix = Path(name).suffix.lower()
-
     if suffix == ".pdf":
         from pypdf import PdfReader
         reader = PdfReader(BytesIO(uploaded_file.getvalue()))
         text = "\n".join(page.extract_text() or "" for page in reader.pages)
-        lines = text.splitlines()
-    elif suffix == ".csv":
+        return text.splitlines(), "pdf_text"
+    if suffix == ".csv":
         raw = uploaded_file.getvalue().decode("utf-8-sig", errors="replace")
         rows = csv.reader(raw.splitlines())
-        lines = [" | ".join(cell.strip() for cell in row if cell.strip()) for row in rows]
-    elif suffix in {".xlsx", ".xls"}:
+        return [" | ".join(cell.strip() for cell in row if cell.strip()) for row in rows], "csv"
+    if suffix in {".xlsx", ".xls"}:
         import pandas as pd
         frame = pd.read_excel(BytesIO(uploaded_file.getvalue()), header=None)
         lines = [
             " | ".join(str(v).strip() for v in row.tolist() if str(v).strip() not in {"", "nan"})
             for _, row in frame.iterrows()
         ]
-    else:
-        raise ValueError("Supported calendar formats: PDF, CSV, XLSX.")
+        return lines, "xlsx"
+    raise ValueError("Supported calendar formats: PDF, CSV, XLSX.")
 
+
+def _events_from_lines(lines, source):
     events = []
-    warnings = []
     for line in lines:
         if not line:
             continue
         event_date = _parse_date(line)
         if event_date:
-            events.append(_event(event_date, line, name))
-
-    unique = []
-    seen = set()
+            events.append(_event(event_date, line, source))
+    unique, seen = [], set()
     for item in events:
         key = (item["date"], item["type"], item["name"].lower())
         if key not in seen:
             seen.add(key)
             unique.append(item)
+    return unique
 
-    if not unique:
+
+def parse_academic_calendar(uploaded_file, use_ocr=True):
+    """Parse PDF/CSV/XLSX academic calendars into normalized dated events.
+
+    PDFs are parsed with native text extraction first. If no dates are found and
+    use_ocr is enabled, local Tesseract OCR is used as a fallback for scans.
+    """
+    lines, source = _lines_from_file(uploaded_file)
+    events = _events_from_lines(lines, source)
+    warnings = []
+
+    if not events and source == "pdf_text" and use_ocr:
+        try:
+            from ocr_parser import _ocr_pages
+            pages = _ocr_pages(uploaded_file)
+            events = _events_from_lines([line for page in pages for line in page["text"].splitlines()], "pdf_ocr")
+            if events:
+                warnings.append("PDF had no extractable text; calendar was recovered with local Tesseract OCR.")
+        except Exception as exc:
+            warnings.append(f"PDF text extraction found no dates and OCR fallback failed: {exc}")
+
+    if not events:
         warnings.append("No dated calendar events were detected. Check the date format or export the calendar as text/CSV/XLSX.")
-
-    return unique, warnings
+    return events, warnings
 
 
 def _in_range(d, semester_start, semester_end):
@@ -130,31 +132,22 @@ def calendar_summary(events, semester_start=None, semester_end=None, restricted_
             parsed.append((datetime.fromisoformat(event["date"]).date(), event))
         except (KeyError, ValueError, TypeError):
             continue
-
     if semester_start is None or semester_end is None:
         dates = [d for d, _ in parsed]
         if dates:
             semester_start, semester_end = min(dates), max(dates)
         else:
-            return {
-                "semester_days": 0, "teaching_days": 0, "holiday_days": 0,
-                "restricted_holiday_days": 0, "blocked_days": 0, "events": 0,
-                "weekday_holiday_counts": {d: 0 for d in DAYS},
-            }
-
+            return {"semester_days": 0, "teaching_days": 0, "holiday_days": 0, "restricted_holiday_days": 0, "blocked_days": 0, "events": 0, "weekday_holiday_counts": {d: 0 for d in DAYS}}
     if semester_start > semester_end:
         raise ValueError("Semester start must be on or before semester end.")
-
     parsed = [(d, event) for d, event in parsed if _in_range(d, semester_start, semester_end)]
     holiday_dates = {d for d, e in parsed if e["type"] == "holiday"}
     restricted_dates = {d for d, e in parsed if e["type"] == "restricted_holiday"}
     blocked_dates = holiday_dates | (restricted_dates if restricted_as_holiday else set())
-
     weekday_holiday_counts = {d: 0 for d in DAYS}
     for d in blocked_dates:
         if d.weekday() < 5:
             weekday_holiday_counts[DAYS[d.weekday()]] += 1
-
     weekday = semester_start
     teaching_days = 0
     semester_days = 0
@@ -164,7 +157,6 @@ def calendar_summary(events, semester_start=None, semester_end=None, restricted_
             if weekday not in blocked_dates:
                 teaching_days += 1
         weekday += timedelta(days=1)
-
     return {
         "semester_start": semester_start.isoformat(),
         "semester_end": semester_end.isoformat(),
