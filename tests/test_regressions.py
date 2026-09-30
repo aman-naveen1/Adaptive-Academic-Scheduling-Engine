@@ -122,3 +122,29 @@ def test_rh_abbreviation_needs_to_be_a_tag():
     assert _classify("Holi (RH)") == "restricted_holiday"
     assert _classify("Karva Chauth - RH") == "restricted_holiday"
     assert _classify("Rh factor lecture") == "academic_event"
+
+
+def test_single_slot_teacher_disruption_runs_and_keeps_rest_of_week():
+    # Used to raise NameError (SLOTS) and, once fixed, would wipe the teacher's other days.
+    from aase import simulate_disruption
+    data = _base_data()
+    result = simulate_disruption(data, "Teacher unavailable", "Vipin Rathi", day="Monday", slot="09:00-10:00", time_limit=3)
+    assert result["status"] in {"OPTIMAL", "FEASIBLE"}
+    row = next(x for x in result["schedule"] if x["course"] == "DSA")
+    assert (row["day"], row["slot"]) != ("Monday", "09:00-10:00")
+
+
+def test_single_slot_disruption_without_teacher_availability_data():
+    from aase import simulate_disruption
+    data = _base_data()
+    for t in data["teachers"]:
+        t["available_slots"] = {}
+    result = simulate_disruption(data, "Teacher unavailable", "Vipin Rathi", day="Monday", slot="09:00-10:00", time_limit=3)
+    assert result["status"] in {"OPTIMAL", "FEASIBLE"}
+
+
+def test_robustness_report_runs_on_demo():
+    from aase import robustness_report
+    from engine import load_demo_data
+    report = robustness_report(load_demo_data(), time_limit=2)
+    assert report["checks"] > 0
