@@ -83,14 +83,10 @@ def _extract_pdf_row(raw, current_day, default_group):
     slot = _normalise_slot(slot_match.group(0))
     cleaned = SLOT_RE.sub(" ", raw).strip(" |:-")
     cleaned = re.sub(rf"^\s*{re.escape(current_day)}\b", "", cleaned, flags=re.I).strip(" |:-")
-
     room_match = re.search(r"\b(?:room\s*)?(?:c[- ]?\d+|lab[- ]?\d+)\b", cleaned, re.I)
     group_match = re.search(r"\b(?:bsc|bca|mca|section|sec|group|batch)[-A-Za-z0-9]*\b", cleaned, re.I)
     room = room_match.group(0).strip() if room_match else "UNKNOWN"
     group = group_match.group(0).strip() if group_match else default_group
-
-    # Prefer explicit faculty titles. For PDFs that lost column spacing, use the
-    # final two words before the room/group as a conservative faculty fallback.
     teacher_match = re.search(r"\b(?:dr|prof|mr|ms|mrs)\.?\s+[A-Za-z][A-Za-z .'-]+?(?=\s+(?:room\s*)?(?:c[- ]?\d+|lab[- ]?\d+)|\s+(?:bsc|bca|mca|section|sec|group|batch)\b|$)", cleaned, re.I)
     if teacher_match:
         teacher = teacher_match.group(0).strip()
@@ -109,7 +105,6 @@ def _extract_pdf_row(raw, current_day, default_group):
             teacher, prefix = words[-1], words[0]
         else:
             teacher, prefix = "UNKNOWN", middle
-
     course = prefix.strip(" |:-") or "UNKNOWN"
     return {"day": current_day, "slot": slot, "course": course, "teacher": teacher, "room": room, "group": group}
 
@@ -132,15 +127,15 @@ def parse_timetable_text(text, default_group="OCR-GROUP"):
 
 
 def parse_timetable_file(uploaded_file, default_group="OCR-GROUP", use_ocr=False):
-    """Parse timetable PDF, CSV or XLSX. PDF uses text extraction first and Tesseract only when needed."""
+    """Parse timetable PDF, CSV, XLSX or XLS. PDFs use text extraction first and Tesseract only when needed."""
     name = getattr(uploaded_file, "name", "timetable")
     suffix = Path(name).suffix.lower()
     if suffix == ".csv":
         return parse_timetable_dataframe(pd.read_csv(BytesIO(uploaded_file.getvalue())), default_group), "csv"
     if suffix in {".xlsx", ".xls"}:
-        return parse_timetable_dataframe(pd.read_excel(BytesIO(uploaded_file.getvalue())), default_group), "xlsx"
+        return parse_timetable_dataframe(pd.read_excel(BytesIO(uploaded_file.getvalue())), default_group), suffix.lstrip(".")
     if suffix != ".pdf":
-        raise ValueError("Supported timetable formats: PDF, CSV, XLSX.")
+        raise ValueError("Supported timetable formats: PDF, CSV, XLSX, XLS.")
 
     from pypdf import PdfReader
     reader = PdfReader(BytesIO(uploaded_file.getvalue()))
@@ -170,5 +165,5 @@ def parse_calendar_file(uploaded_file):
         reader = PdfReader(BytesIO(uploaded_file.getvalue()))
         return "\n".join(page.extract_text() or "" for page in reader.pages)
     else:
-        raise ValueError("Supported calendar formats: PDF, CSV, XLSX.")
+        raise ValueError("Supported calendar formats: PDF, CSV, XLSX, XLS.")
     return "\n".join(" | ".join(str(v).strip() for v in row.tolist() if str(v).strip() not in {"", "nan"}) for _, row in frame.iterrows())
