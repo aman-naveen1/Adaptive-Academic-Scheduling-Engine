@@ -186,7 +186,7 @@ elif page == "Optimization":
     with c1: absent_day=st.selectbox("Day",["Monday","Tuesday","Wednesday","Thursday","Friday"])
     with c2: absent_slot=st.selectbox("Slot",["09:00-10:00","10:00-11:00","11:15-12:15","12:15-13:15","14:00-15:00","15:00-16:00"])
     if st.button("Run AASE",type="primary"):
-        if operation=="Optimize whole timetable": result=optimize_whole_timetable(data,time_limit=15)
+        if operation=="Optimize whole timetable": result=optimize_whole_timetable(data,time_limit=15,absent_teacher=absent_teacher,absent_day=absent_day,absent_slot=absent_slot)
         elif operation=="Repair one disruption": result=optimize_timetable(data,student_id=selected_group,absent_teacher=absent_teacher,absent_day=absent_day,absent_slot=absent_slot)
         elif operation=="Heuristic repair": result=repair_schedule(data,absent_day,absent_slot,absent_teacher,selected_group)
         else:
