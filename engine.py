@@ -8,9 +8,16 @@ SLOTS = ["09:00-10:00","10:00-11:00","11:15-12:15","12:15-13:15","14:00-15:00","
 def load_demo_data():
     return json.loads(Path("demo/data.json").read_text(encoding="utf-8"))
 
-def parse_timetable_pdf(uploaded_file, use_ocr=False, default_group="OCR-GROUP"):
+def parse_timetable_pdf(uploaded_file, use_ocr=False, default_group="OCR-GROUP", cloud_ocr_config=None):
     if use_ocr:
-        records, pages, warnings = parse_ocr_timetable(uploaded_file, default_group=default_group)
+        config = cloud_ocr_config or {}
+        records, pages, warnings = parse_ocr_timetable(
+            uploaded_file,
+            default_group=default_group,
+            project_id=config.get("project_id", ""),
+            location=config.get("location", "us"),
+            processor_id=config.get("processor_id", ""),
+        )
         return records
     from pypdf import PdfReader
     reader = PdfReader(BytesIO(uploaded_file.getvalue()))
@@ -38,8 +45,6 @@ def repair_schedule(data, absent_day, absent_slot, absent_teacher, student_id):
 
     original_gap = gap_score(schedule, student_id)
     candidates = []
-
-    # First preference: move the same teacher's class to a slot they are available.
     teacher = next((t for t in data["teachers"] if t["name"] == target["teacher"]), None)
     for day in ["Monday","Tuesday","Wednesday","Thursday","Friday"]:
         for slot in SLOTS:
@@ -57,7 +62,6 @@ def repair_schedule(data, absent_day, absent_slot, absent_teacher, student_id):
             candidate.append(moved)
             candidates.append((gap_score(candidate, student_id), day, slot, target["teacher"], candidate))
 
-    # Second preference: substitute a qualified teacher during the disrupted day.
     if not candidates:
         for t in data["teachers"]:
             if t["name"] == absent_teacher or target["course"] not in t.get("qualified_courses", []):
@@ -80,8 +84,9 @@ def repair_schedule(data, absent_day, absent_slot, absent_teacher, student_id):
     if not candidates:
         return {"changed": False, "summary": "No feasible repair found without creating a direct conflict.", "schedule": schedule, "reasons": []}
 
-    best = min(candidates, key=lambda x: (x[0], 0 if x[1] == absent_day else 1, SLOTS.index(x[2])))
-    best_gap, new_day, new_slot, new_teacher, repaired = best
+    best_gap, new_day, new_slot, new_teacher, repaired = min(
+        candidates, key=lambda x: (x[0], 0 if x[1] == absent_day else 1, SLOTS.index(x[2]))
+    )
     reasons = [
         f"Original student idle-gap score: {original_gap}.",
         f"Repaired student idle-gap score: {best_gap}.",
