@@ -61,18 +61,61 @@ def _read_structured_upload(uploaded_file):
     return None
 
 
-def _classify_resource_upload(frame):
-    """Identify the supplied CSV/XLSX by its normalized column names."""
-    columns = {str(c).strip().lower().replace(" ", "_") for c in frame.columns}
+def _norm_header(value):
+    return re.sub(r"[^a-z0-9]+", "_", str(value).strip().lower()).strip("_")
+
+
+def _normalize_resource_frame(frame):
+    """Normalize common metadata headers without requiring exact template names."""
+    aliases = {
+        "teacher_name": "teacher", "faculty": "teacher", "faculty_name": "teacher",
+        "instructor": "teacher", "professor": "teacher",
+        "room_name": "room", "room_no": "room", "room_number": "room",
+        "classroom": "room", "venue": "room",
+        "seating_capacity": "capacity", "room_capacity": "capacity", "seats": "capacity",
+        "qualified_course": "qualified_courses", "courses": "qualified_courses",
+        "subjects": "qualified_courses", "available_day": "available_days",
+        "days": "available_days", "availability_days": "available_days",
+        "available_time": "available_hours", "available_slots": "available_hours",
+        "times": "available_hours", "time_slots": "available_hours",
+        "absence_date": "date", "absent_date": "date",
+        "event": "name", "event_name": "name", "description": "name",
+        "event_type": "type", "category": "type", "status": "type",
+        "absence_reason": "reason", "remarks": "reason", "notes": "reason",
+    }
+    rename = {}
+    for col in frame.columns:
+        key = _norm_header(col)
+        if key in aliases:
+            rename[col] = aliases[key]
+    return frame.rename(columns=rename)
+
+
+def _classify_resource_upload(frame, filename=""):
+    """Identify resource CSV/XLSX files using headers, with filename fallback."""
+    frame = _normalize_resource_frame(frame)
+    columns = {_norm_header(c) for c in frame.columns}
+    name = str(filename).lower()
+
+    if "rooms" in name or "room" in name:
+        if "room" in columns or "capacity" in columns:
+            return "rooms"
+    if "availability" in name and "teacher" in columns:
+        return "availability"
+    if ("absence" in name or "absences" in name) and "teacher" in columns and "date" in columns:
+        return "absences"
+    if "calendar" in name and "date" in columns:
+        return "calendar"
+
     if {"day", "slot", "course"} <= columns and ({"teacher"} <= columns or {"room"} <= columns):
         return "timetable"
     if {"room", "capacity"} <= columns:
         return "rooms"
-    if {"teacher", "date"} <= columns and ("reason" in columns or "status" in columns):
+    if {"teacher", "date"} <= columns:
         return "absences"
-    if {"teacher", "qualified_courses", "available_days"} <= columns:
+    if {"teacher", "qualified_courses"} <= columns and {"available_days"} <= columns:
         return "availability"
-    if {"date", "name", "type"} <= columns:
+    if "date" in columns and ("name" in columns or "type" in columns):
         return "calendar"
     return None
 
@@ -80,7 +123,7 @@ def _classify_resource_upload(frame):
 def _import_resource_upload(uploaded_file, selected_group):
     """Import one structured resource file into the normalized SQLite layer."""
     frame = _read_structured_upload(uploaded_file)
-    kind = _classify_resource_upload(frame)
+    kind = _classify_resource_upload(frame, getattr(uploaded_file, "name", ""))
 
     if kind == "timetable":
         rows, source = parse_timetable_file(uploaded_file, default_group=selected_group, use_ocr=False)
@@ -98,6 +141,7 @@ def _import_resource_upload(uploaded_file, selected_group):
         return f"{len(rows)} timetable record(s) imported", rows
 
     if kind == "rooms":
+        frame = _normalize_resource_frame(frame)
         rooms = []
         for _, row in frame.iterrows():
             name = str(row.get("room", "")).strip()
@@ -112,6 +156,7 @@ def _import_resource_upload(uploaded_file, selected_group):
         return f"{len(rooms)} room record(s) imported", rooms
 
     if kind == "availability":
+        frame = _normalize_resource_frame(frame)
         teachers = []
         for _, row in frame.iterrows():
             name = str(row.get("teacher", "")).strip()
@@ -131,6 +176,7 @@ def _import_resource_upload(uploaded_file, selected_group):
         return f"{len(teachers)} teacher availability record(s) imported", teachers
 
     if kind == "absences":
+        frame = _normalize_resource_frame(frame)
         count = 0
         for _, row in frame.iterrows():
             teacher = str(row.get("teacher", "")).strip()
@@ -242,7 +288,7 @@ elif page == "Time Table":
                     timetable_sources.append(f"{f.name} ({source})")
                 else:
                     frame = _read_structured_upload(f)
-                    kind = _classify_resource_upload(frame)
+                    kind = _classify_resource_upload(frame, getattr(f, "name", ""))
                     if kind == "timetable":
                         rows, source = parse_timetable_file(f,default_group=selected_group,use_ocr=False)
                         timetable_rows.extend(rows)
