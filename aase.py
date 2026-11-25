@@ -75,7 +75,7 @@ def optimize_with_calendar(data, events=None, restricted_as_holiday=False, time_
     return result
 
 
-def simulate_disruption(data, disruption_type, target_name, day=None, slot=None, time_limit=8):
+def simulate_disruption(data, disruption_type, target_name, day=None, slot=None, slots=None, time_limit=8):
     """Stress-test a timetable against a single teacher or room failure.
 
     If a teacher day/slot is supplied, only that occurrence is unavailable.
@@ -83,16 +83,17 @@ def simulate_disruption(data, disruption_type, target_name, day=None, slot=None,
     """
     trial = deepcopy(data)
     classes = trial.get("classes", [])
+    selected_slots = list(slots or ([] if slot is None else [slot]))
 
     if disruption_type == "Teacher unavailable":
-        affected = [x for x in classes if x.get("teacher") == target_name and (day is None or x.get("day") == day) and (slot is None or x.get("slot") == slot)]
+        affected = [x for x in classes if x.get("teacher") == target_name and (day is None or x.get("day") == day) and (not selected_slots or x.get("slot") in selected_slots)]
         if not affected:
             return {"status": "NO_MATCH", "summary": f"No classes use teacher {target_name} for the requested disruption."}
-        if day is not None and slot is not None:
+        if day is not None and selected_slots:
             def _without_slot(teacher):
                 # Keep the rest of the week; empty availability means "free all week".
                 avail = {d: list(v) for d, v in teacher.get("available_slots", {}).items()} or {d: list(SLOTS) for d in DAYS}
-                avail[day] = [s for s in avail.get(day, []) if s != slot]
+                avail[day] = [s for s in avail.get(day, []) if s not in selected_slots]
                 return {**teacher, "available_slots": avail}
 
             trial["teachers"] = [
@@ -114,7 +115,7 @@ def simulate_disruption(data, disruption_type, target_name, day=None, slot=None,
     else:
         return {"status": "INVALID", "summary": "Unknown disruption type."}
 
-    result = optimize_whole_timetable(trial, time_limit=time_limit)
+    result = optimize_whole_timetable(trial, time_limit=time_limit, absent_teacher=target_name if disruption_type == "Teacher unavailable" else None, absent_day=day if disruption_type == "Teacher unavailable" else None, absent_slots=selected_slots if disruption_type == "Teacher unavailable" else None)
     if result.get("status") not in {"OPTIMAL", "FEASIBLE"}:
         return {"status": result.get("status", "INFEASIBLE"), "summary": "AASE could not find a feasible timetable after the simulated disruption.", "affected_classes": len(affected)}
 
@@ -127,6 +128,7 @@ def simulate_disruption(data, disruption_type, target_name, day=None, slot=None,
         "changed_count": result.get("changed_count", len(changed)),
         "schedule": result.get("schedule", []),
         "reasons": result.get("reasons", []),
+        "disruption_slots": selected_slots,
     }
 
 
