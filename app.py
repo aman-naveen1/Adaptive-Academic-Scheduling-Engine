@@ -220,23 +220,50 @@ elif page == "Time Table":
         st.rerun()
 
     if parse_clicked:
-        imported_preview=[]
+        timetable_rows=[]
+        timetable_sources=[]
         successes=[]
         errors=[]
-        ordered_files=sorted(files,key=lambda f: 0 if getattr(f,"name","").lower().endswith((".csv",".xlsx",".xls")) and _classify_resource_upload(_read_structured_upload(f))=="timetable" else 1)
-        for f in ordered_files:
+
+        # Collect all timetable files first so uploading both classroom and
+        # student timetables produces one combined timetable instead of the
+        # second file replacing the first.
+        resource_files=[]
+        for f in files:
             try:
                 suffix = Path(getattr(f, "name", "")).suffix.lower()
                 if suffix == ".pdf":
                     rows, source = parse_timetable_file(f,default_group=selected_group,use_ocr=use_ocr)
-                    seed_from_data({"classes": rows, "students": [{"id": selected_group, "size": 0}]}, source="document_import", replace_classes=True)
-                    imported_preview.extend(rows)
-                    successes.append(f"{f.name}: {len(rows)} timetable row(s) parsed via {source}.")
+                    timetable_rows.extend(rows)
+                    timetable_sources.append(f"{f.name} ({source})")
                 else:
-                    message, preview = _import_resource_upload(f, selected_group)
-                    if preview:
-                        imported_preview.extend(preview if isinstance(preview, list) else [])
-                    successes.append(f"{f.name}: {message}.")
+                    frame = _read_structured_upload(f)
+                    kind = _classify_resource_upload(frame)
+                    if kind == "timetable":
+                        rows, source = parse_timetable_file(f,default_group=selected_group,use_ocr=False)
+                        timetable_rows.extend(rows)
+                        timetable_sources.append(f"{f.name} ({source})")
+                    else:
+                        resource_files.append(f)
+            except Exception as exc:
+                errors.append(f"{f.name}: {exc}")
+
+        if timetable_rows:
+            teachers = sorted({row["teacher"] for row in timetable_rows if row["teacher"] != "UNKNOWN"})
+            rooms = sorted({row["room"] for row in timetable_rows if row["room"] != "UNKNOWN"})
+            students = [{"id": selected_group, "size": 0}]
+            seed_from_data({
+                "classes": timetable_rows,
+                "teachers": [{"name": t, "qualified_courses": sorted({r["course"] for r in timetable_rows if r["teacher"] == t}), "available_slots": {}} for t in teachers],
+                "rooms": [{"name": room, "capacity": 60} for room in rooms],
+                "students": students,
+            }, source="document_import", replace_classes=True)
+            successes.append(f"Timetable: {len(timetable_rows)} row(s) imported from {len(timetable_sources)} file(s).")
+
+        for f in resource_files:
+            try:
+                message, preview = _import_resource_upload(f, selected_group)
+                successes.append(f"{f.name}: {message}.")
             except Exception as exc:
                 errors.append(f"{f.name}: {exc}")
 
@@ -246,7 +273,7 @@ elif page == "Time Table":
             st.error(f"Could not process {error}")
 
         if successes:
-            st.session_state["last_import_preview"] = imported_preview
+            st.session_state["last_import_preview"] = timetable_rows
             st.session_state["last_import_summary"] = f"Processed {len(successes)} file(s); data is now available in SQLite."
             st.session_state["timetable_upload_version"] += 1
             st.rerun()
