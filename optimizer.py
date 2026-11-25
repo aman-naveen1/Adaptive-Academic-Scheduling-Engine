@@ -70,7 +70,7 @@ def _add_gap_objective(model, candidates, classes):
     return gap_terms
 
 
-def _apply_absence(data, absent_teacher, absent_day, absent_slot):
+def _apply_absence(data, absent_teacher, absent_day, absent_slot=None, absent_slots=None):
     """Return a copy of data where absent_teacher is unavailable for exactly one day/slot."""
     trial = deepcopy(data)
     classes = trial.get("classes", [])
@@ -94,16 +94,18 @@ def _apply_absence(data, absent_teacher, absent_day, absent_slot):
             base = {d: list(original.get(d, [])) for d in DAYS}
         else:
             base = {d: list(SLOTS) for d in DAYS}  # empty = available everywhere
-        base[absent_day] = [s for s in base[absent_day] if s != absent_slot]
+        blocked_slots = set(absent_slots or ([] if absent_slot is None else [absent_slot]))
+        base[absent_day] = [s for s in base[absent_day] if s not in blocked_slots]
         teachers[absent_teacher] = {**t, "available_slots": base}
 
     trial["teachers"] = list(teachers.values())
     return trial
 
 
-def optimize_whole_timetable(data, time_limit=15, absent_teacher=None, absent_day=None, absent_slot=None):
-    if absent_teacher and absent_day and absent_slot:
-        data = _apply_absence(data, absent_teacher, absent_day, absent_slot)
+def optimize_whole_timetable(data, time_limit=15, absent_teacher=None, absent_day=None, absent_slot=None, absent_slots=None):
+    selected_slots = list(absent_slots or ([] if absent_slot is None else [absent_slot]))
+    if absent_teacher and absent_day and selected_slots:
+        data = _apply_absence(data, absent_teacher, absent_day, absent_slots=selected_slots)
     classes = [dict(x) for x in data.get("classes", [])]
     teachers = {x["name"]: x for x in data.get("teachers", [])}
     rooms = {x["name"]: x for x in data.get("rooms", [])}
@@ -179,8 +181,8 @@ def optimize_whole_timetable(data, time_limit=15, absent_teacher=None, absent_da
     ]
     if calendar_penalties:
         reasons.append("Calendar-aware costs discourage recurring placements on blocked academic-calendar weekdays.")
-    if absent_teacher and absent_day and absent_slot:
-        reasons.append(f"{absent_teacher} was treated as unavailable on {absent_day} {absent_slot}.")
+    if absent_teacher and absent_day and selected_slots:
+        reasons.append(f"{absent_teacher} was treated as unavailable on {absent_day} at {', '.join(selected_slots)}.")
     return {
         "changed": changed > 0,
         "status": solver.StatusName(status),
@@ -191,10 +193,11 @@ def optimize_whole_timetable(data, time_limit=15, absent_teacher=None, absent_da
     }
 
 
-def optimize_timetable(data, student_id=None, absent_teacher=None, absent_day=None, absent_slot=None, time_limit=5):
+def optimize_timetable(data, student_id=None, absent_teacher=None, absent_day=None, absent_slot=None, absent_slots=None, time_limit=5):
     """Repair one teacher disruption at the affected day/slot."""
     classes = [dict(x) for x in data.get("classes", [])]
-    target = next((x for x in classes if x["teacher"] == absent_teacher and x["day"] == absent_day and x["slot"] == absent_slot), None)
+    selected_slots = list(absent_slots or ([] if absent_slot is None else [absent_slot]))
+    target = next((x for x in classes if x["teacher"] == absent_teacher and x["day"] == absent_day and x["slot"] in selected_slots), None)
     if not target:
         return {"changed": False, "status": "NO_MATCH", "summary": "No class matched that teacher/day/slot.", "schedule": classes, "reasons": []}
 
@@ -204,9 +207,10 @@ def optimize_timetable(data, student_id=None, absent_teacher=None, absent_day=No
         absent_teacher=absent_teacher,
         absent_day=absent_day,
         absent_slot=absent_slot,
+        absent_slots=selected_slots,
     )
     if result.get("status") not in ("OPTIMAL", "FEASIBLE"):
         return {"changed": False, "status": result.get("status", "INFEASIBLE"), "summary": "No feasible repair found.", "schedule": classes, "reasons": result.get("reasons", [])}
     result["summary"] = "CP-SAT repair found a globally consistent timetable around the teacher disruption."
-    result.setdefault("reasons", []).append(f"{absent_teacher} was unavailable only for {absent_day} {absent_slot} during this repair.")
+    result.setdefault("reasons", []).append(f"{absent_teacher} was unavailable only on {absent_day} at {', '.join(selected_slots)} during this repair.")
     return result
