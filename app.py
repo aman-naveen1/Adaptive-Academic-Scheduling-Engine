@@ -42,6 +42,13 @@ button[kind="primary"] { background:#123b70 !important; color:#fff !important; }
 </style>
 """, unsafe_allow_html=True)
 
+# Streamlit reruns the script after widget interactions. These counters give
+# uploaders a fresh widget identity after a successful import, so the same
+# browser session can process another file without requiring a page refresh.
+for state_key in ("timetable_upload_version", "calendar_upload_version"):
+    if state_key not in st.session_state:
+        st.session_state[state_key] = 0
+
 with st.sidebar:
     st.markdown('<div class="erp-brand">🧠 AASE Control Center</div>', unsafe_allow_html=True)
     page = st.radio("Navigation", ["Dashboard","Time Table","Teachers","Rooms","Academic Calendar","OCR Intake","Disruptions","Optimization","Reports"], label_visibility="collapsed")
@@ -49,6 +56,13 @@ with st.sidebar:
     st.caption("Data layer: SQLite")
     st.caption("OCR: Local Tesseract")
     st.caption("ERP integration: API-ready")
+    st.divider()
+    if st.button("Clear current session", use_container_width=True):
+        for key in ("last_result", "disruption_result", "optimization_result", "robustness", "last_import_preview", "last_calendar_preview"):
+            st.session_state.pop(key, None)
+        st.session_state["timetable_upload_version"] += 1
+        st.session_state["calendar_upload_version"] += 1
+        st.rerun()
 
 if "db_seeded" not in st.session_state:
     seed_from_data(load_demo_data(), source="demo", replace_classes=True)
@@ -96,16 +110,30 @@ if page == "Dashboard":
 elif page == "Time Table":
     st.markdown('<div class="section-title">Timetable Intake</div>',unsafe_allow_html=True)
     st.caption("Upload PDF, CSV or Excel. CSV/XLSX/XLS are parsed directly; PDF text is extracted first and scanned PDFs can fall back to local Tesseract OCR.")
-    files=st.file_uploader("Upload timetable files",type=["pdf","csv","xlsx","xls"],accept_multiple_files=True)
-    use_ocr=st.checkbox("Enable Tesseract fallback for scanned PDFs",value=True)
-    if files and st.button("Parse & import timetable",type="primary"):
+    uploader_key = f"timetable_upload_{st.session_state['timetable_upload_version']}"
+    files=st.file_uploader("Upload timetable files",type=["pdf","csv","xlsx","xls"],accept_multiple_files=True,key=uploader_key)
+    use_ocr=st.checkbox("Enable Tesseract fallback for scanned PDFs",value=True,key="timetable_use_ocr")
+    b1,b2=st.columns([3,1])
+    with b1:
+        parse_clicked=st.button("Parse & import timetable",type="primary",disabled=not files)
+    with b2:
+        clear_clicked=st.button("Clear upload",disabled=not files)
+    if clear_clicked:
+        st.session_state["timetable_upload_version"] += 1
+        st.rerun()
+
+    if parse_clicked:
         imported=[]
+        errors=[]
         for f in files:
             try:
                 rows, source = parse_timetable_file(f,default_group=selected_group,use_ocr=use_ocr)
                 imported.extend(rows)
                 st.success(f"{f.name}: {len(rows)} row(s) parsed via {source}.")
-            except Exception as exc: st.error(f"Could not process {f.name}: {exc}")
+            except Exception as exc:
+                errors.append(f"{f.name}: {exc}")
+        for error in errors:
+            st.error(f"Could not process {error}")
         if imported:
             imported_data={"classes":imported,"teachers":[],"rooms":[],"students":[{"id":selected_group,"size":0}]}
             teacher_names=sorted({x["teacher"] for x in imported if x["teacher"]!="UNKNOWN"})
@@ -113,8 +141,13 @@ elif page == "Time Table":
             imported_data["teachers"]=[{"name":t,"qualified_courses":sorted({x["course"] for x in imported if x["teacher"]==t}),"available_slots":{}} for t in teacher_names]
             imported_data["rooms"]=[{"name":r,"capacity":60} for r in room_names]
             seed_from_data(imported_data,source="document_import",replace_classes=True)
-            st.success(f"Imported {len(imported)} timetable record(s) into SQLite.")
-            st.dataframe(pd.DataFrame(imported),use_container_width=True,hide_index=True)
+            st.session_state["last_import_preview"] = imported
+            st.session_state["last_import_summary"] = f"Imported {len(imported)} timetable record(s) into SQLite."
+            st.session_state["timetable_upload_version"] += 1
+            st.rerun()
+    if st.session_state.get("last_import_preview"):
+        st.success(st.session_state.get("last_import_summary","Timetable imported successfully."))
+        st.dataframe(pd.DataFrame(st.session_state["last_import_preview"]),use_container_width=True,hide_index=True)
 
 elif page == "Teachers":
     st.markdown('<div class="section-title">Teacher Metadata & Availability</div>',unsafe_allow_html=True)
@@ -134,19 +167,38 @@ elif page == "Rooms":
 
 elif page == "Academic Calendar":
     st.markdown('<div class="section-title">Academic Calendar Intelligence</div>',unsafe_allow_html=True)
-    calendar_file=st.file_uploader("Upload academic calendar",type=["pdf","csv","xlsx","xls"],key="calendar_upload")
-    restricted=st.checkbox("Treat restricted holidays as blocked",value=False)
-    if calendar_file and st.button("Parse & save calendar",type="primary"):
+    calendar_key = f"calendar_upload_{st.session_state['calendar_upload_version']}"
+    calendar_file=st.file_uploader("Upload academic calendar",type=["pdf","csv","xlsx","xls"],key=calendar_key)
+    restricted=st.checkbox("Treat restricted holidays as blocked",value=False,key="calendar_restricted")
+    c1,c2=st.columns([3,1])
+    with c1:
+        calendar_clicked=st.button("Parse & save calendar",type="primary",disabled=not calendar_file)
+    with c2:
+        clear_calendar=st.button("Clear upload",disabled=not calendar_file)
+    if clear_calendar:
+        st.session_state["calendar_upload_version"] += 1
+        st.rerun()
+    if calendar_clicked:
         try:
             events,warnings=parse_academic_calendar(calendar_file,use_ocr=True)
             save_calendar(events,restricted_as_holiday=restricted)
-            for w in warnings: st.warning(w)
             if events:
-                st.success(f"Saved {len(events)} calendar event(s) to SQLite.")
-                st.dataframe(pd.DataFrame(events),use_container_width=True,hide_index=True)
-            else: st.error("No calendar events were parsed, so nothing was saved.")
-        except Exception as exc: st.error(f"Could not process academic calendar: {exc}")
-    else: st.caption("Supported: PDF, CSV, XLSX and XLS. Scanned PDFs automatically fall back to Tesseract when needed.")
+                st.session_state["last_calendar_preview"] = events
+                st.session_state["last_calendar_warnings"] = warnings
+                st.session_state["calendar_upload_version"] += 1
+                st.rerun()
+            else:
+                st.error("No calendar events were parsed, so nothing was saved.")
+                for w in warnings: st.warning(w)
+        except Exception as exc:
+            st.error(f"Could not process {calendar_file.name}: {exc}")
+    else:
+        st.caption("Supported: PDF, CSV, XLSX and XLS. Scanned PDFs automatically fall back to Tesseract when needed.")
+    if st.session_state.get("last_calendar_preview"):
+        st.success(f"Saved {len(st.session_state['last_calendar_preview'])} academic-calendar event(s) to SQLite.")
+        for warning in st.session_state.get("last_calendar_warnings", []):
+            st.warning(warning)
+        st.dataframe(pd.DataFrame(st.session_state["last_calendar_preview"]),use_container_width=True,hide_index=True)
 
 elif page == "OCR Intake":
     st.markdown('<div class="section-title">Document Intake & OCR</div>',unsafe_allow_html=True)
@@ -159,9 +211,9 @@ elif page == "OCR Intake":
 
 elif page == "Disruptions":
     st.markdown('<div class="section-title">Disruption Management</div>',unsafe_allow_html=True)
-    disruption_type=st.radio("Failure type",["Teacher unavailable","Room unavailable"],horizontal=True)
+    disruption_type=st.radio("Failure type",["Teacher unavailable","Room unavailable"],horizontal=True,key="disruption_type")
     targets=sorted({x["teacher"] if disruption_type=="Teacher unavailable" else x["room"] for x in data["classes"]})
-    target=st.selectbox("Resource",targets or ["No resources found"])
+    target=st.selectbox("Resource",targets or ["No resources found"],key="disruption_target")
     if disruption_type == "Teacher unavailable":
         d1,d2=st.columns(2)
         with d1: disruption_day=st.selectbox("Absent day",["Monday","Tuesday","Wednesday","Thursday","Friday"],key="disruption_day")
@@ -169,31 +221,65 @@ elif page == "Disruptions":
     else:
         disruption_day=None
         disruption_slot=None
-    if st.button("Simulate disruption",type="primary"):
-        result=simulate_disruption(data,disruption_type,target,day=disruption_day,slot=disruption_slot,time_limit=10); st.session_state["last_result"]=result; record_run("Disruption simulation",result.get("status","UNKNOWN"),result.get("summary",""))
-    if "last_result" in st.session_state:
-        result=st.session_state["last_result"]
+    d1,d2=st.columns([3,1])
+    with d1:
+        simulate_clicked=st.button("Simulate disruption",type="primary")
+    with d2:
+        clear_simulation=st.button("Clear result",disabled="disruption_result" not in st.session_state)
+    if clear_simulation:
+        st.session_state.pop("disruption_result",None)
+        st.rerun()
+    if simulate_clicked:
+        try:
+            result=simulate_disruption(data,disruption_type,target,day=disruption_day,slot=disruption_slot,time_limit=10)
+            st.session_state["disruption_result"]=result
+            record_run("Disruption simulation",result.get("status","UNKNOWN"),result.get("summary",""))
+        except Exception as exc:
+            st.session_state["disruption_result"]={"status":"ERROR","summary":f"Disruption simulation failed: {exc}"}
+            record_run("Disruption simulation","ERROR",str(exc))
+    if "disruption_result" in st.session_state:
+        result=st.session_state["disruption_result"]
         (st.success if result.get("status") in {"OPTIMAL","FEASIBLE"} or result.get("changed") else st.warning)(result.get("summary","Completed."))
         if result.get("schedule"): st.dataframe(pd.DataFrame(result["schedule"]),use_container_width=True,hide_index=True)
         for r in result.get("reasons",[]): st.write("• "+r)
 
 elif page == "Optimization":
     st.markdown('<div class="section-title">AASE Optimization Engine</div>',unsafe_allow_html=True)
-    operation=st.selectbox("Operation",["Optimize whole timetable","Repair one disruption","Heuristic repair","Robustness analysis"])
+    operation=st.selectbox("Operation",["Optimize whole timetable","Repair one disruption","Heuristic repair","Robustness analysis"],key="optimization_operation")
     teacher_names=sorted({t["name"] for t in data["teachers"]})
     absent_teacher=st.selectbox("Absent teacher",teacher_names) if teacher_names else ""
     c1,c2=st.columns(2)
-    with c1: absent_day=st.selectbox("Day",["Monday","Tuesday","Wednesday","Thursday","Friday"])
-    with c2: absent_slot=st.selectbox("Slot",["09:00-10:00","10:00-11:00","11:15-12:15","12:15-13:15","14:00-15:00","15:00-16:00"])
-    if st.button("Run AASE",type="primary"):
-        if operation=="Optimize whole timetable": result=optimize_whole_timetable(data,time_limit=15,absent_teacher=absent_teacher,absent_day=absent_day,absent_slot=absent_slot)
-        elif operation=="Repair one disruption": result=optimize_timetable(data,student_id=selected_group,absent_teacher=absent_teacher,absent_day=absent_day,absent_slot=absent_slot)
-        elif operation=="Heuristic repair": result=repair_schedule(data,absent_day,absent_slot,absent_teacher,selected_group)
-        else:
-            rb=robustness_report(data,time_limit=5); result={"status":"COMPLETE","summary":f"Tested {rb['checks']} single-resource disruptions.","reasons":[f"Recoverable: {rb['recoverable_checks']}/{rb['checks']} ({rb['robustness_percent']}%)."]}; st.session_state["robustness"]=rb
-        st.session_state["last_result"]=result; record_run(operation,result.get("status","UNKNOWN"),result.get("summary",""))
-    if "last_result" in st.session_state:
-        result=st.session_state["last_result"]
+    with c1: absent_day=st.selectbox("Day",["Monday","Tuesday","Wednesday","Thursday","Friday"],key="optimization_day")
+    with c2: absent_slot=st.selectbox("Slot",["09:00-10:00","10:00-11:00","11:15-12:15","12:15-13:15","14:00-15:00","15:00-16:00"],key="optimization_slot")
+    o1,o2=st.columns([3,1])
+    with o1:
+        run_clicked=st.button("Run AASE",type="primary")
+    with o2:
+        clear_optimization=st.button("Clear result",disabled="optimization_result" not in st.session_state)
+    if clear_optimization:
+        st.session_state.pop("optimization_result",None)
+        st.session_state.pop("robustness",None)
+        st.rerun()
+    if run_clicked:
+        try:
+            if operation=="Optimize whole timetable":
+                result=optimize_whole_timetable(data,time_limit=15,absent_teacher=absent_teacher,absent_day=absent_day,absent_slot=absent_slot)
+            elif operation=="Repair one disruption":
+                result=optimize_timetable(data,student_id=selected_group,absent_teacher=absent_teacher,absent_day=absent_day,absent_slot=absent_slot)
+            elif operation=="Heuristic repair":
+                result=repair_schedule(data,absent_day,absent_slot,absent_teacher,selected_group)
+            else:
+                rb=robustness_report(data,time_limit=5)
+                result={"status":"COMPLETE","summary":f"Tested {rb['checks']} single-resource disruptions.","reasons":[f"Recoverable: {rb['recoverable_checks']}/{rb['checks']} ({rb['robustness_percent']}%)."]}
+                st.session_state["robustness"]=rb
+            st.session_state["optimization_result"]=result
+            record_run(operation,result.get("status","UNKNOWN"),result.get("summary",""))
+        except Exception as exc:
+            result={"status":"ERROR","summary":f"Optimization failed: {exc}","reasons":["Check the input timetable/resource metadata and try again."]}
+            st.session_state["optimization_result"]=result
+            record_run(operation,"ERROR",str(exc))
+    if "optimization_result" in st.session_state:
+        result=st.session_state["optimization_result"]
         (st.success if result.get("status") in {"OPTIMAL","FEASIBLE","COMPLETE"} or result.get("changed") else st.warning)(result.get("summary","Operation completed."))
         if result.get("schedule"): st.dataframe(pd.DataFrame(result["schedule"]),use_container_width=True,hide_index=True)
         for r in result.get("reasons",[]): st.write("• "+r)
