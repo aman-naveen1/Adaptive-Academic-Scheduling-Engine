@@ -351,7 +351,7 @@ elif page == "Disruptions":
     if disruption_type == "Teacher unavailable":
         d1,d2=st.columns(2)
         with d1: disruption_day=st.selectbox("Absent day",["Monday","Tuesday","Wednesday","Thursday","Friday"],key="disruption_day")
-        with d2: disruption_slot=st.selectbox("Absent slot",["09:00-10:00","10:00-11:00","11:15-12:15","12:15-13:15","14:00-15:00","15:00-16:00"],key="disruption_slot")
+        with d2: disruption_slots=st.multiselect("Absent time slots",["09:00-10:00","10:00-11:00","11:15-12:15","12:15-13:15","14:00-15:00","15:00-16:00"],default=["09:00-10:00"],key="disruption_slots")
     else:
         disruption_day=None
         disruption_slot=None
@@ -365,7 +365,7 @@ elif page == "Disruptions":
         st.rerun()
     if simulate_clicked:
         try:
-            result=simulate_disruption(data,disruption_type,target,day=disruption_day,slot=disruption_slot,time_limit=10)
+            result=simulate_disruption(data,disruption_type,target,day=disruption_day,slots=disruption_slots,time_limit=10)
             st.session_state["disruption_result"]=result
             record_run("Disruption simulation",result.get("status","UNKNOWN"),result.get("summary",""))
         except Exception as exc:
@@ -384,7 +384,7 @@ elif page == "Optimization":
     absent_teacher=st.selectbox("Absent teacher",teacher_names) if teacher_names else ""
     c1,c2=st.columns(2)
     with c1: absent_day=st.selectbox("Day",["Monday","Tuesday","Wednesday","Thursday","Friday"],key="optimization_day")
-    with c2: absent_slot=st.selectbox("Slot",["09:00-10:00","10:00-11:00","11:15-12:15","12:15-13:15","14:00-15:00","15:00-16:00"],key="optimization_slot")
+    with c2: absent_slots=st.multiselect("Time slots",["09:00-10:00","10:00-11:00","11:15-12:15","12:15-13:15","14:00-15:00","15:00-16:00"],default=["09:00-10:00"],key="optimization_slots")
     o1,o2=st.columns([3,1])
     with o1:
         run_clicked=st.button("Run AASE",type="primary")
@@ -397,9 +397,9 @@ elif page == "Optimization":
     if run_clicked:
         try:
             if operation=="Optimize whole timetable":
-                result=optimize_whole_timetable(data,time_limit=15,absent_teacher=absent_teacher,absent_day=absent_day,absent_slot=absent_slot)
+                result=optimize_whole_timetable(data,time_limit=15,absent_teacher=absent_teacher,absent_day=absent_day,absent_slots=absent_slots)
             elif operation=="Repair one disruption":
-                result=optimize_timetable(data,student_id=selected_group,absent_teacher=absent_teacher,absent_day=absent_day,absent_slot=absent_slot)
+                result=optimize_timetable(data,student_id=selected_group,absent_teacher=absent_teacher,absent_day=absent_day,absent_slots=absent_slots)
             elif operation=="Heuristic repair":
                 result=repair_schedule(data,absent_day,absent_slot,absent_teacher,selected_group)
             else:
