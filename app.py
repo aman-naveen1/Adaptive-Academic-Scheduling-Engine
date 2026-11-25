@@ -1,6 +1,7 @@
 from datetime import date, datetime
 from html import escape
 from pathlib import Path
+import re
 import pandas as pd
 import streamlit as st
 
@@ -118,11 +119,13 @@ def _import_resource_upload(uploaded_file, selected_group):
                 continue
             courses = [x.strip() for x in str(row.get("qualified_courses", "")).split(";") if x.strip()]
             days = [x.strip() for x in str(row.get("available_days", "")).split(";") if x.strip()]
-            hours = str(row.get("available_hours", "")).strip()
+            hours_text = str(row.get("available_hours", "")).strip()
+            # Normalize availability into actual slot lists for CP-SAT.
+            hours = [s.strip() for s in re.split(r"[;,|]+", hours_text) if s.strip()]
             teachers.append({
                 "name": name,
                 "qualified_courses": courses,
-                "available_slots": {day: hours for day in days},
+                "available_slots": {day: hours[:] for day in days},
             })
         seed_from_data({"teachers": teachers}, source="teacher_metadata", replace_classes=False)
         return f"{len(teachers)} teacher availability record(s) imported", teachers
