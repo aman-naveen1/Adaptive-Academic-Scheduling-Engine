@@ -358,7 +358,7 @@ elif page == "Disruptions":
         disruption_slots=[]
     d1,d2=st.columns([3,1])
     with d1:
-        simulate_clicked=st.button("Simulate disruption",type="primary")
+        simulate_clicked=st.button("Simulate disruption",type="primary",disabled=(disruption_type=="Teacher unavailable" and not disruption_slots))
     with d2:
         clear_simulation=st.button("Clear result",disabled="disruption_result" not in st.session_state)
     if clear_simulation:
@@ -388,7 +388,7 @@ elif page == "Optimization":
     with c2: absent_slots=st.multiselect("Time slots",["09:00-10:00","10:00-11:00","11:15-12:15","12:15-13:15","14:00-15:00","15:00-16:00"],default=["09:00-10:00"],key="optimization_slots")
     o1,o2=st.columns([3,1])
     with o1:
-        run_clicked=st.button("Run AASE",type="primary")
+        run_clicked=st.button("Run AASE",type="primary",disabled=(operation in {"Optimize whole timetable","Repair one disruption","Heuristic repair"} and not absent_slots))
     with o2:
         clear_optimization=st.button("Clear result",disabled="optimization_result" not in st.session_state)
     if clear_optimization:
