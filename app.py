@@ -354,7 +354,7 @@ elif page == "Disruptions":
         with d2: disruption_slots=st.multiselect("Absent time slots",["09:00-10:00","10:00-11:00","11:15-12:15","12:15-13:15","14:00-15:00","15:00-16:00"],default=["09:00-10:00"],key="disruption_slots")
     else:
         disruption_day=None
-        disruption_slot=None
+        disruption_slots=[]
     d1,d2=st.columns([3,1])
     with d1:
         simulate_clicked=st.button("Simulate disruption",type="primary")
@@ -401,7 +401,7 @@ elif page == "Optimization":
             elif operation=="Repair one disruption":
                 result=optimize_timetable(data,student_id=selected_group,absent_teacher=absent_teacher,absent_day=absent_day,absent_slots=absent_slots)
             elif operation=="Heuristic repair":
-                result=repair_schedule(data,absent_day,absent_slot,absent_teacher,selected_group)
+                result=repair_schedule(data,absent_day,absent_slots[0] if absent_slots else None,absent_teacher,selected_group)
             else:
                 rb=robustness_report(data,time_limit=5)
                 result={"status":"COMPLETE","summary":f"Tested {rb['checks']} single-resource disruptions.","reasons":[f"Recoverable: {rb['recoverable_checks']}/{rb['checks']} ({rb['robustness_percent']}%)."]}
