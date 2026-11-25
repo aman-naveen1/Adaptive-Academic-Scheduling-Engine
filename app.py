@@ -49,6 +49,103 @@ for state_key in ("timetable_upload_version", "calendar_upload_version"):
     if state_key not in st.session_state:
         st.session_state[state_key] = 0
 
+def _read_structured_upload(uploaded_file):
+    """Return a dataframe for CSV/XLSX/XLS uploads."""
+    name = getattr(uploaded_file, "name", "").lower()
+    if name.endswith(".csv"):
+        return pd.read_csv(uploaded_file)
+    if name.endswith(".xlsx") or name.endswith(".xls"):
+        return pd.read_excel(uploaded_file)
+    return None
+
+
+def _classify_resource_upload(frame):
+    """Identify the supplied CSV/XLSX by its normalized column names."""
+    columns = {str(c).strip().lower().replace(" ", "_") for c in frame.columns}
+    if {"day", "slot", "course"} <= columns and ({"teacher"} <= columns or {"room"} <= columns):
+        return "timetable"
+    if {"room", "capacity"} <= columns:
+        return "rooms"
+    if {"teacher", "date"} <= columns and ("reason" in columns or "status" in columns):
+        return "absences"
+    if {"teacher", "qualified_courses", "available_days"} <= columns:
+        return "availability"
+    if {"date", "name", "type"} <= columns:
+        return "calendar"
+    return None
+
+
+def _import_resource_upload(uploaded_file, selected_group):
+    """Import one structured resource file into the normalized SQLite layer."""
+    frame = _read_structured_upload(uploaded_file)
+    kind = _classify_resource_upload(frame)
+
+    if kind == "timetable":
+        rows, source = parse_timetable_file(uploaded_file, default_group=selected_group, use_ocr=False)
+        teachers = sorted({row["teacher"] for row in rows if row["teacher"] != "UNKNOWN"})
+        rooms = sorted({row["room"] for row in rows if row["room"] != "UNKNOWN"})
+        students = [{"id": selected_group, "size": 0}]
+        if "student_id" in frame.columns:
+            students = [{"id": str(x).strip(), "size": 0} for x in frame["student_id"].dropna().unique() if str(x).strip()]
+        seed_from_data({
+            "classes": rows,
+            "teachers": [{"name": t, "qualified_courses": sorted({r["course"] for r in rows if r["teacher"] == t}), "available_slots": {}} for t in teachers],
+            "rooms": [{"name": room, "capacity": 60} for room in rooms],
+            "students": students,
+        }, source="document_import", replace_classes=True)
+        return f"{len(rows)} timetable record(s) imported", rows
+
+    if kind == "rooms":
+        rooms = []
+        for _, row in frame.iterrows():
+            name = str(row.get("room", "")).strip()
+            if not name or name.lower() == "nan":
+                continue
+            rooms.append({
+                "name": name,
+                "capacity": int(float(row.get("capacity", 0) or 0)),
+                "type": str(row.get("type", "Classroom")).strip(),
+            })
+        seed_from_data({"rooms": rooms}, source="room_metadata", replace_classes=False)
+        return f"{len(rooms)} room record(s) imported", rooms
+
+    if kind == "availability":
+        teachers = []
+        for _, row in frame.iterrows():
+            name = str(row.get("teacher", "")).strip()
+            if not name or name.lower() == "nan":
+                continue
+            courses = [x.strip() for x in str(row.get("qualified_courses", "")).split(";") if x.strip()]
+            days = [x.strip() for x in str(row.get("available_days", "")).split(";") if x.strip()]
+            hours = str(row.get("available_hours", "")).strip()
+            teachers.append({
+                "name": name,
+                "qualified_courses": courses,
+                "available_slots": {day: hours for day in days},
+            })
+        seed_from_data({"teachers": teachers}, source="teacher_metadata", replace_classes=False)
+        return f"{len(teachers)} teacher availability record(s) imported", teachers
+
+    if kind == "absences":
+        count = 0
+        for _, row in frame.iterrows():
+            teacher = str(row.get("teacher", "")).strip()
+            absence_date = str(row.get("date", "")).strip()
+            if teacher and teacher.lower() != "nan" and absence_date and absence_date.lower() != "nan":
+                record_absence(teacher, absence_date, str(row.get("reason", "")).strip())
+                count += 1
+        return f"{count} teacher absence record(s) imported", []
+
+    if kind == "calendar":
+        events, warnings = parse_academic_calendar(uploaded_file, use_ocr=False)
+        if not events:
+            raise ValueError("No dated academic-calendar events were detected.")
+        save_calendar(events, restricted_as_holiday=False)
+        return f"{len(events)} academic-calendar event(s) imported", events
+
+    raise ValueError("Unrecognized structured file. Expected timetable, room, teacher availability, teacher absence, or academic-calendar columns.")
+
+
 with st.sidebar:
     st.markdown('<div class="erp-brand">🧠 AASE Control Center</div>', unsafe_allow_html=True)
     page = st.radio("Navigation", ["Dashboard","Time Table","Teachers","Rooms","Academic Calendar","OCR Intake","Disruptions","Optimization","Reports"], label_visibility="collapsed")
@@ -108,46 +205,56 @@ if page == "Dashboard":
         else: st.info("No optimization runs yet.")
 
 elif page == "Time Table":
-    st.markdown('<div class="section-title">Timetable Intake</div>',unsafe_allow_html=True)
-    st.caption("Upload PDF, CSV or Excel. CSV/XLSX/XLS are parsed directly; PDF text is extracted first and scanned PDFs can fall back to local Tesseract OCR.")
+    st.markdown('<div class="section-title">Timetable & Resource Intake</div>',unsafe_allow_html=True)
+    st.caption("Upload one or more timetable/resource CSV or Excel files. AASE automatically detects timetable, room, teacher availability, absence and academic-calendar files.")
     uploader_key = f"timetable_upload_{st.session_state['timetable_upload_version']}"
-    files=st.file_uploader("Upload timetable files",type=["pdf","csv","xlsx","xls"],accept_multiple_files=True,key=uploader_key)
+    files=st.file_uploader("Upload timetable/resource files",type=["pdf","csv","xlsx","xls"],accept_multiple_files=True,key=uploader_key)
     use_ocr=st.checkbox("Enable Tesseract fallback for scanned PDFs",value=True,key="timetable_use_ocr")
     b1,b2=st.columns([3,1])
     with b1:
-        parse_clicked=st.button("Parse & import timetable",type="primary",disabled=not files)
+        parse_clicked=st.button("Parse & import files",type="primary",disabled=not files)
     with b2:
-        clear_clicked=st.button("Clear upload",disabled=not files)
+        clear_clicked=st.button("Clear uploads",disabled=not files)
     if clear_clicked:
         st.session_state["timetable_upload_version"] += 1
         st.rerun()
 
     if parse_clicked:
-        imported=[]
+        imported_preview=[]
+        successes=[]
         errors=[]
-        for f in files:
+        ordered_files=sorted(files,key=lambda f: 0 if getattr(f,"name","").lower().endswith((".csv",".xlsx",".xls")) and _classify_resource_upload(_read_structured_upload(f))=="timetable" else 1)
+        for f in ordered_files:
             try:
-                rows, source = parse_timetable_file(f,default_group=selected_group,use_ocr=use_ocr)
-                imported.extend(rows)
-                st.success(f"{f.name}: {len(rows)} row(s) parsed via {source}.")
+                suffix = Path(getattr(f, "name", "")).suffix.lower()
+                if suffix == ".pdf":
+                    rows, source = parse_timetable_file(f,default_group=selected_group,use_ocr=use_ocr)
+                    seed_from_data({"classes": rows, "students": [{"id": selected_group, "size": 0}]}, source="document_import", replace_classes=True)
+                    imported_preview.extend(rows)
+                    successes.append(f"{f.name}: {len(rows)} timetable row(s) parsed via {source}.")
+                else:
+                    message, preview = _import_resource_upload(f, selected_group)
+                    if preview:
+                        imported_preview.extend(preview if isinstance(preview, list) else [])
+                    successes.append(f"{f.name}: {message}.")
             except Exception as exc:
                 errors.append(f"{f.name}: {exc}")
+
+        for message in successes:
+            st.success(message)
         for error in errors:
             st.error(f"Could not process {error}")
-        if imported:
-            imported_data={"classes":imported,"teachers":[],"rooms":[],"students":[{"id":selected_group,"size":0}]}
-            teacher_names=sorted({x["teacher"] for x in imported if x["teacher"]!="UNKNOWN"})
-            room_names=sorted({x["room"] for x in imported if x["room"]!="UNKNOWN"})
-            imported_data["teachers"]=[{"name":t,"qualified_courses":sorted({x["course"] for x in imported if x["teacher"]==t}),"available_slots":{}} for t in teacher_names]
-            imported_data["rooms"]=[{"name":r,"capacity":60} for r in room_names]
-            seed_from_data(imported_data,source="document_import",replace_classes=True)
-            st.session_state["last_import_preview"] = imported
-            st.session_state["last_import_summary"] = f"Imported {len(imported)} timetable record(s) into SQLite."
+
+        if successes:
+            st.session_state["last_import_preview"] = imported_preview
+            st.session_state["last_import_summary"] = f"Processed {len(successes)} file(s); data is now available in SQLite."
             st.session_state["timetable_upload_version"] += 1
             st.rerun()
+
     if st.session_state.get("last_import_preview"):
-        st.success(st.session_state.get("last_import_summary","Timetable imported successfully."))
-        st.dataframe(pd.DataFrame(st.session_state["last_import_preview"]),use_container_width=True,hide_index=True)
+        st.success(st.session_state.get("last_import_summary","Files imported successfully."))
+        if st.session_state["last_import_preview"]:
+            st.dataframe(pd.DataFrame(st.session_state["last_import_preview"]),use_container_width=True,hide_index=True)
 
 elif page == "Teachers":
     st.markdown('<div class="section-title">Teacher Metadata & Availability</div>',unsafe_allow_html=True)
