@@ -98,13 +98,12 @@ def _classify_resource_upload(frame, filename=""):
     name = str(filename).lower()
 
     if "rooms" in name or "room" in name:
-        if "room" in columns or "capacity" in columns:
-            return "rooms"
-    if "availability" in name and "teacher" in columns:
+        return "rooms"
+    if "availability" in name:
         return "availability"
-    if ("absence" in name or "absences" in name) and "teacher" in columns and "date" in columns:
+    if "absence" in name or "absences" in name:
         return "absences"
-    if "calendar" in name and "date" in columns:
+    if "calendar" in name:
         return "calendar"
 
     if {"day", "slot", "course"} <= columns and ({"teacher"} <= columns or {"room"} <= columns):
